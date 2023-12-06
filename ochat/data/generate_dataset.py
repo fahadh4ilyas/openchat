@@ -4,15 +4,28 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
-from typing import Optional
+from typing import Optional, List
 import argparse
 import os
 import random
+
+from pydantic import BaseModel, Field
 
 import ray
 import orjson
 import pyarrow
 from pyarrow import parquet
+
+
+class DataArguments(BaseModel):
+
+    model_path: str = Field(...)
+    model_type: str = Field(...)
+    in_files: List[str] = Field(...)
+    out_prefix: str = Field(...)
+    per_sequence_loss: bool = Field(False)
+    seed: int = Field(42)
+    eval_ratio: float = Field(0.0)
 
 
 PAD_TOKEN_ID = 0
@@ -161,7 +174,9 @@ if __name__ == "__main__":
 
     parser.add_argument("--per-sequence-loss", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--eval-ratio", type=float, default=0.005)
-    args = parser.parse_args()
+    parser.add_argument("--eval-ratio", type=float, default=0.0)
+    args, _ = parser.parse_known_args()
+
+    args = DataArguments(**vars(args))
 
     generate_dataset(**vars(args))
