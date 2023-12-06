@@ -23,7 +23,7 @@ dependencies = [
     "numba", 
     "datasets", 
     "orjson", 
-    "torch", 
+    "torch>=2.1.*", 
     "ray", 
     "sentencepiece", 
     "transformers==4.34.1", 
