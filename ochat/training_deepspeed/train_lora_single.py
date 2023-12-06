@@ -3,6 +3,9 @@ import os
 import math
 import json
 from functools import partial
+from typing import Optional, List
+
+from pydantic import BaseModel, Field, validator
 
 import torch
 
@@ -16,6 +19,40 @@ from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader_single import MultipackDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 
+
+class TrainingArguments(BaseModel):
+
+    model_path: str = Field(...)
+    model_type: Optional[str] = Field(None)
+    data_prefix: str = Field(...)
+    save_path: str = Field(...)
+    save_every: Optional[int] = Field(None, gt=0)
+    batch_max_len: int = Field(81920)
+    epochs: int = Field(5)
+    lr: Optional[float] = Field(None)
+    lr_min_ratio: float = Field(0.1)
+    lr_warmup_ratio: float = Field(0.05)
+    weight_decay: float = Field(0.1)
+    beta1: float = Field(0.9)
+    beta2: float = Field(0.95)
+    eps: float = Field(1e-5)
+    tracking_uri: Optional[str] = Field(None)
+    experiment_name: str = Field(...)
+    run_name: str = Field(...)
+    lora_alpha: int = Field(32)
+    lora_r: int = Field(32)
+    lora_dropout: float = Field(0.05)
+    lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
+    lora_bias: str = Field("none")
+    device: Optional[str] = Field(None)
+
+    @validator('batch_max_len')
+    def val_batch_size(cls, v: int) -> int:
+
+        if v%2048 != 0:
+            raise ValueError('`batch_max_len` must be multiple of 2048')
+        
+        return v
 
 
 PAD_ID     = 0
@@ -74,7 +111,7 @@ def parse_args():
     return args
 
 
-def create_dataset(args, split_name):
+def create_dataset(args: TrainingArguments, split_name):
     # Load data
     filename = f"{args.data_prefix}.{split_name}.parquet"
     if not os.path.isfile(filename):
@@ -123,7 +160,7 @@ def batch_to_tensor(batch):
     return batch_tensor, batch_info
 
 
-def create_distributed_dataloader(args, data):
+def create_distributed_dataloader(args: TrainingArguments, data):
     # Multipack dataloader
     return MultipackDataloader(
         dataset=data,
@@ -137,7 +174,7 @@ def create_distributed_dataloader(args, data):
     )
 
 
-def create_model(args):
+def create_model(args: TrainingArguments):
     print(f"Loading model {args.model_type} from {args.model_path}...")
 
     # Create model + optimizer + lr scheduler
@@ -183,7 +220,7 @@ def cosine_schedule_with_warmup_lr_lambda(
     return min_ratio + max(0.0, (1 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
 
 
-def create_lr_scheduler(args, train_total_steps):
+def create_lr_scheduler(args: TrainingArguments, train_total_steps):
     lr_scheduler = partial(
         cosine_schedule_with_warmup_lr_lambda,
 
@@ -195,11 +232,11 @@ def create_lr_scheduler(args, train_total_steps):
     return lr_scheduler
 
 
-def save_tokenizer(args, save_path):
+def save_tokenizer(args: TrainingArguments, save_path):
     MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(args.model_path).save_pretrained(save_path)
 
 
-def save_openchat_metadata(args, epoch, save_path):
+def save_openchat_metadata(args: TrainingArguments, epoch, save_path):
     metadata = vars(args)
     metadata["epoch"] = epoch
 
@@ -228,7 +265,7 @@ def calculate_auto_lr(lr, batch_max_len, model_type, train_dataset):
     return lr
 
 
-def train(args):
+def train(args: TrainingArguments):
 
     # Dataset
     train_dataset = create_dataset(args, "train")
@@ -261,7 +298,7 @@ def train(args):
     progress_bar = tqdm.tqdm(total=train_total_steps)
 
     if args.tracking_uri:
-        mlflow.set_trackin_uri(args.tracking_uri)
+        mlflow.set_tracking_uri(args.tracking_uri)
     mlflow.set_experiment(args.experiment_name)
     mlflow.start_run(run_name=args.run_name)
     metadata = vars(args).copy()
@@ -358,4 +395,5 @@ def train(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    args = TrainingArguments(**vars(args))
     train(args)
