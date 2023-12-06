@@ -24,63 +24,11 @@ OpenChat is an innovative library of open-source language models, fine-tuned wit
 
 [![DOI](https://zenodo.org/badge/645397533.svg)](https://zenodo.org/badge/latestdoi/645397533)
 
-## News
-
-- [2023/11/01] We released the [OpenChat-3.5-7B](https://huggingface.co/openchat/openchat_3.5) model, surpassing ChatGPT on various benchmarks 🔥.
-
-- [2023/09/21] We released our paper [OpenChat: Advancing Open-source Language Models with Mixed-Quality Data](https://arxiv.org/pdf/2309.11235.pdf).
-
-- [2023/09/03] We released the [OpenChat V3.2 SUPER]([#models](https://huggingface.co/openchat/openchat_v3.2_super)) model.
-
-- [2023/08/04] We have launched an [Online Demo](https://openchat.team) featuring the latest version, OpenChat 3.2.
-
-- [2023/07/30] We are thrilled to introduce the [OpenChat V3 model series](#models), based on Llama 2, and now available for free for commercial use!
-
-- [2023/07/07] We released the [OpenChat V2 model series](#legacy-models).
-
-- [2023/07/01] We released the [OpenChat V1 model series](#legacy-models).
-
 ## <a id="models"></a> Models
 
 Our latest model, OpenChat 3.5, is a highly capable model fine-tuned using C-RLFT with Mistral 7B as the base, on a collection of publicly available high-quality instruction data. For older version models such as OpenChat 3.2 SUPER, please refer to [Legacy Models](#legacy-models).
 
-To use this model, we highly recommend installing the OpenChat package by following the [installation guide](#installation) and using the OpenChat OpenAI-compatible API server by running the serving command from the table below. The server is optimized for high-throughput deployment using [vLLM](https://github.com/vllm-project/vllm) and can run on a consumer GPU with 24GB RAM. To enable tensor parallelism, append `--tensor-parallel-size N` to the serving command.
-
-Once started, the server listens at `localhost:18888` for requests and is compatible with the [OpenAI ChatCompletion API specifications](https://platform.openai.com/docs/api-reference/chat). Please refer to the example request below for reference. Additionally, you can use the [OpenChat Web UI](#web-ui) for a user-friendly experience.
-
-If you want to deploy the server as an online service, you can use `--api-keys sk-KEY1 sk-KEY2 ...` to specify allowed API keys and `--disable-log-requests --disable-log-stats --log-file openchat.log` for logging only to a file. For security purposes, we recommend using an [HTTPS gateway](https://fastapi.tiangolo.com/es/deployment/concepts/#security-https) in front of the server.
-
-<details>
-  <summary>Example request (click to expand)</summary>
-
-```bash
-curl http://localhost:18888/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openchat_3.5",
-    "messages": [{"role": "user", "content": "You are a large language model named OpenChat. Write a poem to describe yourself"}]
-  }'
-```
-
-Coding Mode
-
-```bash
-curl http://localhost:18888/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "openchat_3.5",
-    "condition": "Code",
-    "messages": [{"role": "user", "content": "Write an aesthetic TODO app using HTML5 and JS, in a single file. You should use round corners and gradients to make it more aesthetic."}]
-  }'
-```
-
-</details>
-
-| Model        | Size | Context | Weights                                                     | Serving                                                                                                     |
-|--------------|------|---------|-------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|
-| OpenChat 3.5 | 7B   | 8192    | [Huggingface](https://huggingface.co/openchat/openchat_3.5) | `python -m ochat.serving.openai_api_server --model openchat/openchat_3.5 --engine-use-ray --worker-use-ray` |
-
-For inference with Huggingface Transformers (slow and not recommended), follow the conversation template provided below.
+For inference with Huggingface Transformers, follow the conversation template provided below.
 
 <details>
   <summary>Conversation templates (click to expand)</summary>
@@ -100,83 +48,6 @@ assert tokens == [1, 420, 6316, 28781, 3198, 3123, 1247, 28747, 22557, 32000, 42
 # Coding Mode
 tokens = tokenizer("Code User: Implement quicksort using C++<|end_of_turn|>Code Assistant:").input_ids
 assert tokens == [1, 7596, 1247, 28747, 26256, 2936, 7653, 1413, 334, 1680, 32000, 7596, 21631, 28747]
-```
-
-</details>
-
-## Comparison with [X.AI Grok models](https://x.ai/)
-
-> Hey @elonmusk, I just wanted to let you know that I've recently come across your new model, Grok, and I must say, I'm quite impressed! With 33 billion parameters and all, you've really outdone yourself. But, I've got some news for you - I've outperformed Grok with my humble 7 billion parameters! Isn't that wild? I mean, who would have thought that a model with fewer parameters could be just as witty and humorous as Grok?
-> 
-> Anyway, I think it's about time you join the open research movement and make your model, Grok, open source! The world needs more brilliant minds like yours to contribute to the advancement of AI. Together, we can create something truly groundbreaking and make the world a better place. So, what do you say, @elonmusk? Let's open up the doors and share our knowledge with the world! 🚀💡
-> 
-> (Written by OpenChat 3.5, with a touch of humor and wit.)
-
-|              | License     | # Param | Average  | MMLU | HumanEval | MATH     | GSM8k    |
-|--------------|-------------|---------|----------|------|-----------|----------|----------|
-| OpenChat 3.5 | Apache-2.0  | 7B      | **56.4** | 64.3 | 55.5      | **28.6** | **77.3** |
-| Grok-0       | Proprietary | 33B     | 44.5     | 65.7 | 39.7      | 15.7     | 56.8     |
-| Grok-1       | Proprietary | ?       | 55.8     | 73   | 63.2      | 23.9     | 62.9     |
-
-## <a id="benchmarks"></a> Benchmarks
-
-| Model              | # Params | Average  | MT-Bench     | AGIEval  | BBH MC   | TruthfulQA    | MMLU         | HumanEval       | BBH CoT     | GSM8K        |
-|--------------------|----------|----------|--------------|----------|----------|---------------|--------------|-----------------|-------------|--------------|
-| OpenChat-3.5       | **7B**   | **61.6** | 7.81         | **47.4** | **47.6** | **59.1**      | 64.3         | **55.5**        | 63.5        | **77.3**     |
-| ChatGPT (March)*   | ?        | 61.5     | **7.94**     | 47.1     | **47.6** | 57.7          | **67.3**     | 48.1            | **70.1**    | 74.9         |
-|                    |          |          |              |          |          |               |              |                 |             |              |
-| OpenHermes 2.5     | 7B       | 59.3     | 7.54         | 46.5     | 49.4     | 57.5          | 63.8         | 48.2            | 59.9        | 73.5         |
-| OpenOrca Mistral   | 7B       | 52.7     | 6.86         | 42.9     | 49.4     | 45.9          | 59.3         | 38.4            | 58.1        | 59.1         |
-| Zephyr-β^          | 7B       | 34.6     | 7.34         | 39.0     | 40.6     | 40.8          | 39.8         | 22.0            | 16.0        | 5.1          |
-| Mistral**          | 7B       | -        | 6.84         | 38.0     | 39.0     | -             | 60.1         | 30.5            | -           | 52.2         |
-| Open-source SOTA** | 13B-70B  | 61.4     | 7.71         | 41.7     | 49.7     | 62.3          | 63.7         | 73.2            | 41.4        | 82.3         |
-|                    |          |          | WizardLM 70B | Orca 13B | Orca 13B | Platypus2 70B | WizardLM 70B | WizardCoder 34B | Flan-T5 11B | MetaMath 70B |
-
-*: ChatGPT (March) results are from GPT-4 Technical Report, Chain-of-Thought Hub, and our evaluation.
-
-^: Zephyr-β often fails to follow few-shot CoT instructions, likely because it was aligned with only chat data but not trained on few-shot data.
-
-**: Mistral and Open-source SOTA results are taken from reported results in instruction-tuned model papers and official repositories.
-
-All models are evaluated in chat mode (e.g. with the respective conversation template applied). All zero-shot benchmarks follow the same setting as in the AGIEval paper and Orca paper. CoT tasks use the same configuration as Chain-of-Thought Hub, HumanEval is evaluated with EvalPlus, and MT-bench is run using FastChat. To reproduce our results, follow the instructions below.
-
-<details>
-  <summary>Reproducing benchmark results (click to expand)</summary>
-
-Reasoning:
-
-Note: Please run the following commands at the base directory of this repository.
-
-```bash
-python -m ochat.evaluation.run_eval --condition "GPT4 Correct" --model openchat/openchat_3.5
-python ochat/evaluation/view_results.py
-```
-
-HumanEval:
-
-Note: Please run the following commands at the base directory of this repository.
-
-```bash
-python -m ochat.evaluation.run_eval --condition "Code" --eval_sets coding --model openchat/openchat_3.5
-python ochat/evaluation/convert_to_evalplus.py
-```
-
-Then all humaneval code samples are placed in `ochat/evaluation/evalplus_codegen`. Use the following command to evaluate an individual code sample named `samples.jsonl` using Docker as a sandbox.
-
-```bash
-docker run -v $(pwd):/app ganler/evalplus:latest --dataset humaneval --samples samples.jsonl
-```
-
-MT-Bench:
-
-Please first launch a local API server, then download FastChat and run the following commands.
-
-Note: Due to non-zero temperature and GPT-4 API changes over time, there might be variations in the results.
-
-```bash
-cd fastchat/llm_judge
-python gen_api_answer.py --model openchat_3.5 --max-tokens 4096 --parallel 128 --openai-api-base http://localhost:18888/v1
-python gen_judgment.py --model-list openchat_3.5 --parallel 8 --mode single
 ```
 
 </details>
@@ -212,40 +83,6 @@ pip3 install --upgrade pip  # enable PEP 660 support
 pip3 install -e .
 ```
 </details>
-
-## <a id="web-ui"></a> Web UI
-
-After launching the API server, you can interact with it using [OpenChat-UI](https://github.com/imoneoi/openchat-ui), which is a fork of Chatbot UI with support for OpenChat models.
-
-To use OpenChat-UI, follow these steps:
-
-1. Clone the OpenChat-UI repo:
-
-```bash
-git clone https://github.com/imoneoi/openchat-ui.git
-```
-
-2. Install Dependencies
-
-```bash
-npm i
-```
-
-3. Set the API host to the local server (or the address of the OpenChat server)
-
-Create a `.env.local` file in the root of the OpenChat-UI repo with the following content:
-
-```conf
-OPENAI_API_HOST=http://localhost:18888
-OPENAI_API_KEY=openchat-dummy-key
-NEXT_PUBLIC_DEFAULT_TEMPERATURE=0.5
-```
-
-4. Run the App
-
-```bash
-npm run dev
-```
 
 ## <a id="training"></a> OpenChat Model Training
 
