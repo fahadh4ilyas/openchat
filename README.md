@@ -263,7 +263,7 @@ OpenChat supports Llama 2 and Mistral models. Please first choose a base model t
 
 Note: The OpenChat conversation template requires an `<|end_of_turn|>` special token. The base model specified must include this token. Our provided weights are the original base weights with this token added. If you want to add them manually, use the `convert_llama_weights_to_hf_add_tokens.py` or `mistral_add_tokens.py` in the `scripts` directory.
 
-## Installing DeepSpeed
+## Installing DeepSpeed and Flash Attention
 
 First, ensure that the CUDA `nvcc` compiler is available in your environment. If it is not, install the CUDA toolkit that matches the version used by PyTorch.
 
@@ -271,6 +271,12 @@ Next, install DeepSpeed:
 
 ```bash
 pip install deepspeed
+```
+
+Then, install flash attention:
+
+```bash
+pip install flash-attn --no-build-isolation
 ```
 
 ### Preparing Your Data
