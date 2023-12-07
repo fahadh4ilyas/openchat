@@ -287,16 +287,8 @@ def train(args: TrainingArguments):
     # Hyperparams
     args.lr = calculate_auto_lr(args.lr, args.batch_max_len, args.model_type, train_dataset)
 
-    # Model
-    model_engine, optimizer = create_model(args)
-
-    # LR Scheduler
-    lr_scheduler = create_lr_scheduler(args, train_total_steps)
-
-    # Progress bar and logger
-    progress_bar = None
+    # Logger
     if RANK == 0:
-        progress_bar = tqdm.tqdm(total=train_total_steps)
 
         if args.tracking_uri:
             mlflow.set_tracking_uri(args.tracking_uri)
@@ -307,6 +299,17 @@ def train(args: TrainingArguments):
         metadata.pop('device', None)
         metadata['steps'] = train_total_steps
         mlflow.log_params(metadata)
+
+    # Model
+    model_engine, optimizer = create_model(args)
+
+    # LR Scheduler
+    lr_scheduler = create_lr_scheduler(args, train_total_steps)
+
+    # Progress bar
+    progress_bar = None
+    if RANK == 0:
+        progress_bar = tqdm.tqdm(total=train_total_steps)
 
     # Training Loop
     step = 0
