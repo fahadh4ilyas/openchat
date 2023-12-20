@@ -22,7 +22,7 @@ def _v3_2_role_prefix(from_role, condition):
 
 MODEL_CONFIG_MAP = {
     # OpenChat V3.2
-    "openchat_v3.2": ModelConfig(
+    "llama": ModelConfig(
         # Model
         model_max_context=4096,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
@@ -39,7 +39,7 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4")
     ),
 
-    "openchat_v3.2_yarn": ModelConfig(
+    "llamaYarn": ModelConfig(
         # Model
         model_max_context=16*4096,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
@@ -56,9 +56,7 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4")
     ),
 
-    "openchat_v3.2_mistral": ModelConfig(
-        serving_aliases=("openchat_3.5", ),
-
+    "mistral": ModelConfig(
         # Model
         model_max_context=8192,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
@@ -75,9 +73,7 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4 Correct")
     ),
 
-    "openchat_v3.2_mistral_yarn": ModelConfig(
-        serving_aliases=("openchat_3.5", ),
-
+    "mistralYarn": ModelConfig(
         # Model
         model_max_context=16*4096,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,

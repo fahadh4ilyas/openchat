@@ -4,8 +4,6 @@ from pydantic import BaseModel
 
 
 class ModelConfig(BaseModel):
-    # Alias
-    serving_aliases: Iterable[str] = ()
 
     # Model
     model_max_context: int
