@@ -94,9 +94,9 @@ OpenChat supports Llama 2 and Mistral models. Please first choose a base model t
 
 | Base Model | Size | Weights (with EOT token)          | Model Type              | Recommended Batch Size per GPU (8xA100 80GB) |
 |------------|------|-----------------------------------|-------------------------|--------------------------------------|
-| Mistral    | 7B   | `imone/Mistral_7B_with_EOT_token` | `openchat_v3.2_mistral` | 83968                                |
-| Llama 2    | 7B   | `imone/LLaMA2_7B_with_EOT_token`  | `openchat_v3.2`         | 83968                                |
-| Llama 2    | 13B  | `imone/Llama2_13B_with_EOT_token` | `openchat_v3.2`         | 36864                                |
+| Mistral    | 7B   | `imone/Mistral_7B_with_EOT_token` | `mistral` | 83968                                |
+| Llama 2    | 7B   | `imone/LLaMA2_7B_with_EOT_token`  | `llama`         | 83968                                |
+| Llama 2    | 13B  | `imone/Llama2_13B_with_EOT_token` | `llama`         | 36864                                |
 
 Note: The OpenChat conversation template requires an `<|end_of_turn|>` special token. The base model specified must include this token. Our provided weights are the original base weights with this token added. If you want to add them manually, use the `convert_llama_weights_to_hf_add_tokens.py` or `mistral_add_tokens.py` in the `scripts` directory.
 
