@@ -44,7 +44,7 @@ class TrainingArguments(BaseModel):
     lora_dropout: float = Field(0.05)
     lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
     lora_bias: str = Field("none")
-    device: Optional[str] = Field(None)
+    modules_to_save: Optional[str] = Field(None)
 
     @validator('batch_max_len')
     def val_batch_size(cls, v: int) -> int:
@@ -104,6 +104,7 @@ def parse_args():
     parser.add_argument("--lora_dropout", type=float, default=0.05)
     parser.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
     parser.add_argument("--lora_bias", type=str, default="none")
+    parser.add_argument("--modules_to_save", nargs="*", type=str, default=None)
 
 
     # Parse known args
@@ -185,7 +186,8 @@ def create_model(args: TrainingArguments):
             lora_alpha=args.lora_alpha,
             target_modules=args.lora_target_modules,
             lora_dropout=args.lora_dropout,
-            bias=args.lora_bias
+            bias=args.lora_bias,
+            modules_to_save=args.modules_to_save
         )
     # Create Lora Model
     model = get_peft_model(model, lora_config)
