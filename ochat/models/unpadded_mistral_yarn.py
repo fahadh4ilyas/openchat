@@ -42,19 +42,13 @@ logger = logging.get_logger(__name__)
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor, num_seq: int):
-    result = (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
-    if num_seq > 0:
-        return (1/num_seq) * result
-    return result
+def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+    return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
 @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor, num_seq: int):
-    result = (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
-    if num_seq > 0:
-        return (1/num_seq) * result
-    return result
+def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+    return (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
 
 
 @torch.jit.script  # type: ignore
