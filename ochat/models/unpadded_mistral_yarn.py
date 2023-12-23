@@ -42,13 +42,19 @@ logger = logging.get_logger(__name__)
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
+def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor, num_seq: int):
+    result = (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
+    if num_seq > 0:
+        return (1/num_seq) * result
+    return result
 
 
 @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
+def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor, num_seq: int):
+    result = (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
+    if num_seq > 0:
+        return (1/num_seq) * result
+    return result
 
 
 @torch.jit.script  # type: ignore
@@ -410,7 +416,8 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         max_seqlen: int,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None
+        nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
+        num_seq: Optional[int] = 0
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
@@ -425,8 +432,12 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
-                   weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+            if num_seq > 0:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+            else:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

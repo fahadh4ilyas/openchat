@@ -479,7 +479,8 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         max_seqlen: int,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None
+        nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
+        num_seq: Optional[int] = 0
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states, router_logits = self.model(
@@ -494,14 +495,16 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
-                   weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
-        
             aux_loss = load_balancing_loss_func(
                     router_logits, self.num_experts, self.num_experts_per_tok
                 )
             
-            loss[0] += self.router_aux_loss_coef * aux_loss
+            if num_seq > 0:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+            else:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

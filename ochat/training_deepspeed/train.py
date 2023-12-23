@@ -330,9 +330,7 @@ def train(args: TrainingArguments):
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
             # Update
-            loss, acc = model_engine(**batch_tensor, **batch_info).loss
-            loss = (1 / all_numseq) * loss
-            acc  = (1 / all_numseq) * acc
+            loss, acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
 
             model_engine.backward(loss)
 
