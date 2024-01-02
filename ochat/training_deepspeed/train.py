@@ -182,7 +182,7 @@ def create_model(args: TrainingArguments):
     print(f"Loading model {args.model_type} from {args.model_path}...")
 
     # Create model + optimizer + lr scheduler
-    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path)
+    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 

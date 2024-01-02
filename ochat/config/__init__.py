@@ -28,7 +28,6 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),
         model_create_for_training=partial(ochat.models.LlamaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -44,7 +43,6 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),
         model_create_for_training=partial(ochat.models.LlamaYarnForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -60,7 +58,6 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.MistralForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -76,7 +73,6 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.MistralYarnForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -92,7 +88,6 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.MixtralForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
