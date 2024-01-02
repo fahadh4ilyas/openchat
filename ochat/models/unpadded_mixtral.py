@@ -209,8 +209,7 @@ class UnpaddedMixtralAttention(nn.Module):
             cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
             max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
 
-            dropout_p=0.0, causal=True,
-            window_size=(self.sliding_window, self.sliding_window))
+            dropout_p=0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
@@ -260,7 +259,7 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
 
     def forward(self, nz_hidden_states: torch.Tensor) -> torch.Tensor:
         """ """
-        batch_size, sequence_length, hidden_dim = nz_hidden_states.shape
+        sequence_length, hidden_dim = nz_hidden_states.shape
         nz_hidden_states = nz_hidden_states.view(-1, hidden_dim)
         # router_logits: (batch * sequence_length, n_experts)
         router_logits = self.gate(nz_hidden_states)
@@ -272,7 +271,7 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
         routing_weights = routing_weights.to(nz_hidden_states.dtype)
 
         final_nz_hidden_states = torch.zeros(
-            (batch_size * sequence_length, hidden_dim), dtype=nz_hidden_states.dtype, device=nz_hidden_states.device
+            (sequence_length, hidden_dim), dtype=nz_hidden_states.dtype, device=nz_hidden_states.device
         )
 
         # One hot encode the selected experts to create an expert mask
@@ -300,7 +299,7 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
             # However `index_add_` only support torch tensors for indexing so we'll use
             # the `top_x` tensor here.
             final_nz_hidden_states.index_add_(0, top_x, current_nz_hidden_states.to(nz_hidden_states.dtype))
-        final_nz_hidden_states = final_nz_hidden_states.reshape(batch_size, sequence_length, hidden_dim)
+        final_nz_hidden_states = final_nz_hidden_states.reshape(sequence_length, hidden_dim)
         return final_nz_hidden_states, router_logits
 
 
@@ -479,7 +478,8 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         max_seqlen: int,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None
+        nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
+        num_seq: Optional[int] = 0
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states, router_logits = self.model(
@@ -494,14 +494,16 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
-                   weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
-        
             aux_loss = load_balancing_loss_func(
                     router_logits, self.num_experts, self.num_experts_per_tok
                 )
             
-            loss[0] += self.router_aux_loss_coef * aux_loss
+            if num_seq > 0:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+            else:
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, \
+                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
