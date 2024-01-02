@@ -211,8 +211,6 @@ def create_model(args: TrainingArguments):
         )
     # Create Lora Model
     model = get_peft_model(model, lora_config)
-    # Model to assigned cuda device
-    model = model.to(args.local_rank)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
