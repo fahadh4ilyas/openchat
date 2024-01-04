@@ -39,7 +39,7 @@ class ConversationTemplate(BaseModel):
         super().__init__(**data, bos_tokens_=bos_tokens_, eot_tokens_=eot_tokens_)
 
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
-        return self.tokenizer(strings, split_special_tokens=True, return_attention_mask=False, add_special_tokens=False).input_ids
+        return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
 
     def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False):
         # Pre-tokenize all conversations
