@@ -183,6 +183,8 @@ def create_model(args: TrainingArguments):
 
     # Create model + optimizer + lr scheduler
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True)
+    # Model to assigned cuda device
+    model = model.to(args.local_rank)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
