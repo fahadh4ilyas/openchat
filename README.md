@@ -69,14 +69,14 @@ conda activate openchat
 conda install -y python=3.11
 pip3 install torch torchvision torchaudio
 
-pip3 install ochat
+pip3 install git+http://git.blackeye.id/fahadh/openchat.git
 ```
 
 <details>
   <summary>In addition to PyPI, you can also install from source (click to expand)</summary>
 
 ```bash
-git clone https://github.com/imoneoi/openchat
+git clone http://git.blackeye.id/fahadh/openchat.git
 cd openchat
 
 pip3 install --upgrade pip  # enable PEP 660 support
