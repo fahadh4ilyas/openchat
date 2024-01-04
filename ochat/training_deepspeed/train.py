@@ -189,12 +189,11 @@ def create_model(args: TrainingArguments):
     model.gradient_checkpointing_enable()
 
     # Optimizer
-    optimizer = torch.optim.AdamW(model.parameters(),
-                                  lr=args.lr,
-                                  weight_decay=args.weight_decay,
-                                  betas=(args.beta1, args.beta2),
-                                  eps=args.eps,
-                                  fused=True)
+    optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
+                                             lr=args.lr,
+                                             weight_decay=args.weight_decay,
+                                             betas=(args.beta1, args.beta2),
+                                             eps=args.eps)
 
     # DeepSpeed model
     model_engine, optimizer, _, _ = deepspeed.initialize(args=args,
