@@ -3,7 +3,7 @@ import os
 import math
 import json
 from functools import partial
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field, validator
 
@@ -13,6 +13,8 @@ import torch.distributed as dist
 import tqdm
 import mlflow
 import numpy as np
+
+from peft import LoraConfig, get_peft_model
 
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
@@ -46,6 +48,12 @@ class TrainingArguments(BaseModel):
     tracking_uri: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
+    lora_alpha: int = Field(32)
+    lora_r: int = Field(32)
+    lora_dropout: float = Field(0.05)
+    lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
+    lora_bias: str = Field("none")
+    modules_to_save: Optional[str] = Field(None)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -106,6 +114,15 @@ def parse_args():
     parser.add_argument("--tracking_uri", type=str, default=None)
     parser.add_argument("--experiment_name", type=str, required=True)
     parser.add_argument("--run_name", type=str, required=True)
+
+    # LORA
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_r", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser.add_argument("--lora_bias", type=str, default="none")
+    parser.add_argument("--modules_to_save", nargs="*", type=str, default=None)
+
 
     # DeepSpeed parameters
     parser = deepspeed.add_config_arguments(parser)
@@ -183,8 +200,20 @@ def create_model(args: TrainingArguments):
 
     # Create model + optimizer + lr scheduler
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path)
+    # Create lora config
+    lora_config = LoraConfig(
+            r=args.lora_r,
+            lora_alpha=args.lora_alpha,
+            target_modules=args.lora_target_modules,
+            lora_dropout=args.lora_dropout,
+            bias=args.lora_bias,
+            modules_to_save=args.modules_to_save
+        )
+    # Create Lora Model
+    model = get_peft_model(model, lora_config)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
 
     # Optimizer
     optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(model.parameters(),
@@ -245,7 +274,7 @@ def calculate_auto_lr(lr, batch_max_len, model_type, train_dataset):
     
     # Llama hyperparameters
     # FIXME: Only 7B/13B is supported
-    base_lr = 3e-4
+    base_lr = 1e-2
     base_bs = 4_000_000
     if "mistral" in model_type.lower():
         base_lr /= 6.0

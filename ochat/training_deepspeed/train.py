@@ -266,7 +266,6 @@ def train(args: TrainingArguments):
     dsconfig = HfDeepSpeedConfig(args.deepspeed_config)
     RANK = dist.get_rank()
 
-
     # Dataset
     train_dataset = create_dataset(args, "train")
     eval_dataset  = create_dataset(args, "eval")
@@ -391,11 +390,18 @@ def train(args: TrainingArguments):
         if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
             dist.barrier()
 
+            if model_engine.zero_optimization_stage() == 3:
+                state_dict = model_engine._zero3_consolidated_16bit_state_dict()
+            elif RANK == 0:
+                state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
+
             if RANK == 0:
                 save_path = os.path.join(args.save_path, f"ep_{epoch}")
 
                 model_engine.module.save_pretrained(save_path,
-                                                    state_dict=deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict()))  # type: ignore
+                                                    state_dict=state_dict)  # type: ignore
+
+                # model_engine.save_fp16_model(save_path, "pytorch_model.bin")
 
                 # Also save tokenizer from base model
                 save_tokenizer(args, save_path)
