@@ -4,17 +4,13 @@
     },
 
     "zero_optimization": {
-        "stage": 3,
-        "offload_param": {
-            "device": "cpu",
-            "pin_memory": true
-        },
+        "stage": 2,
         "offload_optimizer": {
             "device": "cpu",
             "pin_memory": true
         },
         "overlap_comm": true,
-        "gather_fp16_weights_on_model_save": true
+        "round_robin_gradients": true
     },
 
     "gradient_clipping": 1.0,
