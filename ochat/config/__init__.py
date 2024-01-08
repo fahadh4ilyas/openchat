@@ -142,7 +142,7 @@ MODEL_CONFIG_MAP = {
         conversation_template=partial(ChatMLConversationTemplate,
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
-                                      inference_condition="GPT4 Correct")
+                                      inference_condition="GPT4 correct")
     ),
 
     "mistralYarn_chatml": ModelConfig(
@@ -157,7 +157,7 @@ MODEL_CONFIG_MAP = {
         conversation_template=partial(ChatMLConversationTemplate,
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
-                                      inference_condition="GPT4 Correct")
+                                      inference_condition="GPT4 correct")
     ),
 
     "mixtral_chatml": ModelConfig(
@@ -172,7 +172,7 @@ MODEL_CONFIG_MAP = {
         conversation_template=partial(ChatMLConversationTemplate,
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
-                                      inference_condition="GPT4 Correct")
+                                      inference_condition="GPT4 correct")
     ),
 
     "zephyr": ModelConfig(
