@@ -110,6 +110,8 @@ Next, install DeepSpeed:
 pip install deepspeed
 ```
 
+> Better to set environment variable `DS_BUILD_CPU_ADAM=1` and `DS_BUILD_FUSED_ADAM=1` before installing deepspeed to build the optimizer.
+
 Then, install flash attention:
 
 ```bash
@@ -183,6 +185,34 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
           --deepspeed \
           --deepspeed_config ochat/training_deepspeed/deepspeed_config.json
 ```
+
+> Change `ochat.training_deepspeed.train` to `ochat.training_deepspeed.train_offload` if you want to use deepspeed ZERO offloading
+
+</details>
+
+<details>
+
+<summary>Training Commands LORA (click to expand)</summary>
+
+```bash
+NUM_GPUS=8
+
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
+          --model_path BASE_REPO \
+          --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+          --save_path PATH_TO_SAVE_MODEL \
+          --batch_max_len BATCH_SIZE \
+          --epochs 50 \
+          --save_every 10 \
+          --use_lora \
+          --lora_alpha 32 \
+          --lora_r 32 \
+          --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+          --deepspeed \
+          --deepspeed_config ochat/training_deepspeed/deepspeed_config.json
+```
+
+> Change `ochat.training_deepspeed.train` to `ochat.training_deepspeed.train_offload` if you want to use deepspeed ZERO offloading
 
 </details>
 
