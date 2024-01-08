@@ -3,7 +3,7 @@ import os
 import math
 import json
 from functools import partial
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field, validator
 
@@ -17,6 +17,7 @@ import numpy as np
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
+from ochat.training_deepspeed.train_lora import TrainingArguments as LoraTrainingArguments, train as lora_train
 
 from transformers.integrations import HfDeepSpeedConfig
 
@@ -46,6 +47,13 @@ class TrainingArguments(BaseModel):
     tracking_uri: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
+    use_lora: bool = Field(False)
+    lora_alpha: int = Field(32)
+    lora_r: int = Field(32)
+    lora_dropout: float = Field(0.05)
+    lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
+    lora_bias: str = Field("none")
+    modules_to_save: Optional[str] = Field(None)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -106,6 +114,15 @@ def parse_args():
     parser.add_argument("--tracking_uri", type=str, default=None)
     parser.add_argument("--experiment_name", type=str, required=True)
     parser.add_argument("--run_name", type=str, required=True)
+
+    # LORA
+    parser.add_argument("--use_lora", action='store_true')
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_r", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser.add_argument("--lora_bias", type=str, default="none")
+    parser.add_argument("--modules_to_save", nargs="*", type=str, default=None)
 
     # DeepSpeed parameters
     parser = deepspeed.add_config_arguments(parser)
@@ -417,4 +434,10 @@ def train(args: TrainingArguments):
 if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
-    train(args)
+    if args.use_lora:
+        args = TrainingArguments.dict()
+        args.pop('use_lora', True)
+        args = LoraTrainingArguments(**args)
+        lora_train(args)
+    else:
+        train(args)

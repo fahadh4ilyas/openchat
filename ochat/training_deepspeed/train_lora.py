@@ -431,11 +431,6 @@ def train(args: TrainingArguments):
                 model_engine.module.save_pretrained(save_path,
                                                     state_dict=state_dict)  # type: ignore
 
-                # model_engine.save_fp16_model(save_path, "pytorch_model.bin")
-
-                # Also save tokenizer from base model
-                save_tokenizer(args, save_path)
-
                 # Write metadata
                 save_openchat_metadata(args, epoch, save_path)
     
