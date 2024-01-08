@@ -9,6 +9,10 @@ class Message(BaseModel):
 
     weight: Optional[float] = None
 
+class ChatMLMessage(BaseModel):
+    message: str
+    weight: float
+
 
 class Conversation(BaseModel):
     items: List[Message]
@@ -119,4 +123,77 @@ class ConversationTemplate(BaseModel):
         # Sanity check
         assert all_text_idx == len(all_text)
 
+        return result_tokens, result_weights
+
+class ChatMLConversationTemplate(BaseModel):
+    tokenizer: Callable
+
+    # Prompt
+    role_prefix: Callable
+
+    prompt_format: str
+    sep: List[int]
+
+    inference_condition: Optional[str] = None
+
+    bos_tokens_: List[int]
+
+    def __init__(self, **data):
+        tokenizer = data["tokenizer"]
+
+        sep = tokenizer('\n', add_special_tokens=False).input_ids
+        bos_tokens_ = tokenizer("").input_ids
+
+        super().__init__(**data, sep=sep, bos_tokens_=bos_tokens_)
+    
+    def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
+        return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
+
+    def _convert_to_chatml(self, conversation: Conversation, default_condition: str = "") -> List[ChatMLMessage]:
+
+        prompts = []
+        if conversation.system:
+            prompts.append(ChatMLMessage(message=self.prompt_format.format(role='system', text=conversation.system), weight=0.0))
+        
+        for message in conversation.items:
+            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(message.role, conversation.condition or default_condition), text=message.content), weight=message.weight))
+        
+        return prompts
+
+    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False):
+
+        default_condition = self.inference_condition if inference else ""
+
+        chatml_conversations = [self._convert_to_chatml(conv, default_condition) for conv in conversations]
+        all_text = [msg.message for conv in chatml_conversations for msg in conv]
+        text_mapping = dict(zip(all_text, self._safe_tokenize(all_text)))
+
+        result_tokens = []
+        result_weights = []
+        for conv in chatml_conversations:
+            tokens = self.bos_tokens_.copy()
+            weights = [0.0] * len(self.bos_tokens_)
+
+            for msg in conv:
+                token_msg = text_mapping[msg.message]
+                tokens.extend(token_msg)
+                if msg.weight == 0:
+                    weights.extend([0.0] * len(token_msg))
+                else:
+                    first_index = token_msg.index(self.sep[-1])
+                    weights.extend([0.0] * first_index)
+                    rest_index = len(token_msg[first_index:])
+                    w = msg.weight
+                    if seq_level_weight:
+                        w /= rest_index
+                    weights.extend([w] * rest_index)
+                tokens.extend(self.sep)
+                weights.extend([0.0] * len(self.sep))
+            
+            tokens = tokens[:-len(self.sep)]
+            weights = weights[:-len(self.sep)]
+
+            result_tokens.append(tokens)
+            result_weights.append(weights)
+    
         return result_tokens, result_weights
