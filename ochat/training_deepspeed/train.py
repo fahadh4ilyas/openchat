@@ -18,6 +18,8 @@ from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 from ochat.training_deepspeed.train_lora import TrainingArguments as LoraTrainingArguments, train as lora_train
+from ochat.training_deepspeed.train_offload import TrainingArguments as OffloadTrainingArguments, train as offload_train
+from ochat.training_deepspeed.train_lora_offload import TrainingArguments as LoraOffloadTrainingArguments, train as lora_offload_train
 
 from transformers.integrations import HfDeepSpeedConfig
 
@@ -54,6 +56,7 @@ class TrainingArguments(BaseModel):
     lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
     lora_bias: str = Field("none")
     modules_to_save: Optional[str] = Field(None)
+    use_offload: bool = Field(False)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -434,10 +437,24 @@ def train(args: TrainingArguments):
 if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
+    with open(args.deepspeed_config) as f:
+        deepspeed_config = json.load(f)
+    if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
+        args.use_offload = True
     if args.use_lora:
         args = TrainingArguments.dict()
         args.pop('use_lora', True)
-        args = LoraTrainingArguments(**args)
-        lora_train(args)
+        use_offload = args.pop('use_offload', False)
+        if use_offload:
+            args = LoraOffloadTrainingArguments(**args)
+            lora_offload_train(args)
+        else:
+            args = LoraTrainingArguments(**args)
+            lora_train(args)
+    elif args.use_offload:
+        args = TrainingArguments.dict()
+        args.pop('use_offload', True)
+        args = OffloadTrainingArguments(**args)
+        offload_train(args)
     else:
         train(args)
