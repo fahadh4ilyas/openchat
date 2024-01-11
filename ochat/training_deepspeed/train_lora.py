@@ -361,6 +361,11 @@ def train(args: TrainingArguments):
 
             # Update
             loss, acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+            
+            if isinstance(loss, tuple):
+                loss, aux_loss = loss
+            else:
+                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
 
             model_engine.backward(loss)
 
@@ -375,7 +380,7 @@ def train(args: TrainingArguments):
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
-                    "train/loss": loss.item() * (all_numseq / cur_numseq),
+                    "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq),
                     "train/acc":  acc.item()  * (all_numseq / cur_numseq),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
@@ -401,6 +406,9 @@ def train(args: TrainingArguments):
 
                     # Eval
                     eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+
+                    if isinstance(loss, tuple):
+                        eval_loss, _ = eval_loss
                     
                     # Accumulate eval loss
                     eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))

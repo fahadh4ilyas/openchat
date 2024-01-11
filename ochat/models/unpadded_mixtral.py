@@ -499,10 +499,10 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                 )
             
             if num_seq > 0:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, \
+                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), \
                     weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
             else:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, \
+                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), \
                     weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
         return CausalLMOutputWithPast(
