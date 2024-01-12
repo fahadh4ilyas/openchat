@@ -441,7 +441,7 @@ if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
     if args.use_lora:
-        args = TrainingArguments.dict()
+        args = args.dict()
         args.pop('use_lora', True)
         args = LoraTrainingArguments(**args)
         lora_train(args)
