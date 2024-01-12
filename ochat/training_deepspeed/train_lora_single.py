@@ -349,7 +349,7 @@ def train(args: TrainingArguments):
 
             # Logging
             mlflow.log_metrics(metrics={
-                "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq),
+                "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq) + aux_loss.item(),
                 "train/acc":  acc.item()  * (all_numseq / cur_numseq),
                 "train/lr": lr_this_step,
                 "train/epoch": args.epochs * step / train_total_steps
@@ -398,7 +398,7 @@ def train(args: TrainingArguments):
             model.save_pretrained(save_path)  # type: ignore
 
             # Also save tokenizer from base model
-                save_tokenizer(args, save_path)
+            save_tokenizer(args, save_path)
 
             # Write metadata
             save_openchat_metadata(args, epoch, save_path)

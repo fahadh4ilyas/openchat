@@ -366,7 +366,7 @@ def train(args: TrainingArguments):
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
-                    "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq),
+                    "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq) + aux_loss.item(),
                     "train/acc":  acc.item()  * (all_numseq / cur_numseq),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
