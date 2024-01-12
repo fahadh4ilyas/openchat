@@ -55,7 +55,7 @@ class TrainingArguments(BaseModel):
     lora_dropout: float = Field(0.05)
     lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
     lora_bias: str = Field("none")
-    modules_to_save: Optional[str] = Field(None)
+    modules_to_save: Optional[List[str]] = Field(None)
     use_offload: bool = Field(False)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
