@@ -397,6 +397,9 @@ def train(args: TrainingArguments):
 
             model.save_pretrained(save_path)  # type: ignore
 
+            # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
+
             # Write metadata
             save_openchat_metadata(args, epoch, save_path)
     
