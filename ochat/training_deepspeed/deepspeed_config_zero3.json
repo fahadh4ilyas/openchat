@@ -14,7 +14,7 @@
             "pin_memory": true
         },
         "overlap_comm": true,
-        "gather_fp16_weights_on_model_save": true
+        "stage3_gather_16bit_weights_on_model_save": true
     },
 
     "gradient_clipping": 1.0,
