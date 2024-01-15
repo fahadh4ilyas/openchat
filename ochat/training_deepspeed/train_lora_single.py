@@ -45,6 +45,7 @@ class TrainingArguments(BaseModel):
     lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
     lora_bias: str = Field("none")
     modules_to_save: Optional[List[str]] = Field(None)
+    device: Optional[str] = Field(None)
 
     @validator('batch_max_len')
     def val_batch_size(cls, v: int) -> int:
