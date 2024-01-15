@@ -47,13 +47,6 @@ class TrainingArguments(BaseModel):
     tracking_uri: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
-    use_lora: bool = Field(False)
-    lora_alpha: int = Field(32)
-    lora_r: int = Field(32)
-    lora_dropout: float = Field(0.05)
-    lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
-    lora_bias: str = Field("none")
-    modules_to_save: Optional[List[str]] = Field(None)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -85,51 +78,59 @@ def _find_multiple(a, b):
     return (-(a // -b)) * b
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser_base = argparse.ArgumentParser(add_help=False)
+    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
+    parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
-    parser.add_argument("--local_rank", type=int, required=True)
+    parser_base.add_argument("--local_rank", type=int, required=True)
 
     # Model type and data
-    parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--data_prefix", type=str, required=True)
-    parser.add_argument("--save_path",  type=str, required=True)
-    parser.add_argument("--save_every", type=int, default=None)
+    parser_base.add_argument("--model_path", type=str, required=True)
+    parser_base.add_argument("--data_prefix", type=str, required=True)
+    parser_base.add_argument("--save_path",  type=str, required=True)
+    parser_base.add_argument("--save_every", type=int, default=None)
 
     # Hyperparameters
-    parser.add_argument("--batch_max_len",      type=int, default=81920)
-    parser.add_argument("--epochs",             type=int,   default=5)
+    parser_base.add_argument("--batch_max_len",      type=int, default=81920)
+    parser_base.add_argument("--epochs",             type=int,   default=5)
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
-    parser.add_argument("--lr",                 type=float, default=None)
-    parser.add_argument("--lr_min_ratio",       type=float, default=0.1)
-    parser.add_argument("--lr_warmup_ratio",    type=int,   default=0.05)
+    parser_base.add_argument("--lr",                 type=float, default=None)
+    parser_base.add_argument("--lr_min_ratio",       type=float, default=0.1)
+    parser_base.add_argument("--lr_warmup_ratio",    type=int,   default=0.05)
 
-    parser.add_argument("--weight_decay",       type=float, default=0.1)
+    parser_base.add_argument("--weight_decay",       type=float, default=0.1)
 
-    parser.add_argument("--beta1",              type=float, default=0.9)
-    parser.add_argument("--beta2",              type=float, default=0.95)
-    parser.add_argument("--eps",                type=float, default=1e-5)
+    parser_base.add_argument("--beta1",              type=float, default=0.9)
+    parser_base.add_argument("--beta2",              type=float, default=0.95)
+    parser_base.add_argument("--eps",                type=float, default=1e-5)
 
     # MLFLOW
-    parser.add_argument("--tracking_uri", type=str, default=None)
-    parser.add_argument("--experiment_name", type=str, required=True)
-    parser.add_argument("--run_name", type=str, required=True)
+    parser_base.add_argument("--tracking_uri", type=str, default=None)
+    parser_base.add_argument("--experiment_name", type=str, required=True)
+    parser_base.add_argument("--run_name", type=str, required=True)
 
     # LORA
-    parser.add_argument("--use_lora", action='store_true')
-    parser.add_argument("--lora_alpha", type=int, default=32)
-    parser.add_argument("--lora_r", type=int, default=32)
-    parser.add_argument("--lora_dropout", type=float, default=0.05)
-    parser.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    parser.add_argument("--lora_bias", type=str, default="none")
-    parser.add_argument("--modules_to_save", nargs="*", type=str, default=None)
+    parser_lora_confirm.add_argument("--use_lora", action='store_true')
+    parser_lora.add_argument("--lora_alpha", type=int, default=32)
+    parser_lora.add_argument("--lora_r", type=int, default=32)
+    parser_lora.add_argument("--lora_dropout", type=float, default=0.05)
+    parser_lora.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser_lora.add_argument("--lora_bias", type=str, default="none")
+    parser_lora.add_argument("--modules_to_save", nargs="*", type=str, default=None)
 
     # DeepSpeed parameters
-    parser = deepspeed.add_config_arguments(parser)
+    parser_base = deepspeed.add_config_arguments(parser_base)
+
+    # Group parser
+    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
 
     # Parse known args
-    args, unknown = parser.parse_known_args()
-    return args
+    parser_group.parse_args()
+    args_base, _ = parser_base.parse_known_args()
+    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
+    args_lora, _ = parser_lora.parse_known_args()
+    return args_base, args_lora_confirm, args_lora
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -438,11 +439,10 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
-    if args.use_lora:
-        args = args.dict()
-        args.pop('use_lora', True)
+    if args_lora_confirm.use_lora:
+        args = {**args.dict(), **vars(args_lora)}
         args = LoraTrainingArguments(**args)
         lora_train(args)
     else:
