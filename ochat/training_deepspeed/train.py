@@ -39,6 +39,7 @@ class TrainingArguments(BaseModel):
     save_every: Optional[int] = Field(None, gt=0)
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
+    base_lr: float = Field(3e-4)
     lr: Optional[float] = Field(None)
     lr_min_ratio: float = Field(0.1)
     lr_warmup_ratio: float = Field(0.05)
@@ -84,42 +85,43 @@ def parse_args():
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
-    parser_base.add_argument("--local_rank", type=int, required=True)
+    parser_base.add_argument("--local_rank",            type=int, required=True)
 
     # Model type and data
-    parser_base.add_argument("--model_path", type=str, required=True)
-    parser_base.add_argument("--data_prefix", type=str, required=True)
-    parser_base.add_argument("--save_path",  type=str, required=True)
-    parser_base.add_argument("--save_every", type=int, default=None)
+    parser_base.add_argument("--model_path",            type=str, required=True)
+    parser_base.add_argument("--data_prefix",           type=str, required=True)
+    parser_base.add_argument("--save_path",             type=str, required=True)
+    parser_base.add_argument("--save_every",            type=int, default=None)
 
     # Hyperparameters
-    parser_base.add_argument("--batch_max_len",      type=int, default=81920)
-    parser_base.add_argument("--epochs",             type=int,   default=5)
+    parser_base.add_argument("--batch_max_len",         type=int, default=81920)
+    parser_base.add_argument("--epochs",                type=int,   default=5)
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
-    parser_base.add_argument("--lr",                 type=float, default=None)
-    parser_base.add_argument("--lr_min_ratio",       type=float, default=0.1)
-    parser_base.add_argument("--lr_warmup_ratio",    type=int,   default=0.05)
+    parser_base.add_argument("--base_lr",               type=float, default=3e-4)
+    parser_base.add_argument("--lr",                    type=float, default=None)
+    parser_base.add_argument("--lr_min_ratio",          type=float, default=0.1)
+    parser_base.add_argument("--lr_warmup_ratio",       type=int,   default=0.05)
 
-    parser_base.add_argument("--weight_decay",       type=float, default=0.1)
+    parser_base.add_argument("--weight_decay",          type=float, default=0.1)
 
-    parser_base.add_argument("--beta1",              type=float, default=0.9)
-    parser_base.add_argument("--beta2",              type=float, default=0.95)
-    parser_base.add_argument("--eps",                type=float, default=1e-5)
+    parser_base.add_argument("--beta1",                 type=float, default=0.9)
+    parser_base.add_argument("--beta2",                 type=float, default=0.95)
+    parser_base.add_argument("--eps",                   type=float, default=1e-5)
 
     # MLFLOW
-    parser_base.add_argument("--tracking_uri", type=str, default=None)
-    parser_base.add_argument("--experiment_name", type=str, required=True)
-    parser_base.add_argument("--run_name", type=str, required=True)
+    parser_base.add_argument("--tracking_uri",          type=str, default=None)
+    parser_base.add_argument("--experiment_name",       type=str, required=True)
+    parser_base.add_argument("--run_name",              type=str, required=True)
 
     # LORA
-    parser_lora_confirm.add_argument("--use_lora", action='store_true')
-    parser_lora.add_argument("--lora_alpha", type=int, default=32)
-    parser_lora.add_argument("--lora_r", type=int, default=32)
-    parser_lora.add_argument("--lora_dropout", type=float, default=0.05)
-    parser_lora.add_argument("--lora_target_modules", nargs="*", type=str, default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    parser_lora.add_argument("--lora_bias", type=str, default="none")
-    parser_lora.add_argument("--modules_to_save", nargs="*", type=str, default=None)
+    parser_lora_confirm.add_argument("--use_lora",      action='store_true')
+    parser_lora.add_argument("--lora_alpha",            type=int, default=32)
+    parser_lora.add_argument("--lora_r",                type=int, default=32)
+    parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
+    parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser_lora.add_argument("--lora_bias",             type=str, default="none")
+    parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
 
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
@@ -261,13 +263,12 @@ def save_openchat_metadata(args: TrainingArguments, epoch, save_path):
         json.dump(metadata, f, default=lambda o: "<non-serializable>")
 
 
-def calculate_auto_lr(lr, batch_max_len, model_type, train_dataset):
+def calculate_auto_lr(base_lr, lr, batch_max_len, model_type, train_dataset):
     if lr is not None:
         return lr
     
     # Llama hyperparameters
     # FIXME: Only 7B/13B is supported
-    base_lr = 3e-4
     base_bs = 4_000_000
     if "mistral" in model_type.lower():
         base_lr /= 6.0
@@ -306,7 +307,7 @@ def train(args: TrainingArguments):
         eval_loader = create_distributed_dataloader(args, eval_dataset)
 
     # Hyperparams
-    args.lr = calculate_auto_lr(args.lr, args.batch_max_len, args.model_type, train_dataset)
+    args.lr = calculate_auto_lr(args.base_lr, args.lr, args.batch_max_len, args.model_type, train_dataset)
 
     # Logger
     if RANK == 0:
