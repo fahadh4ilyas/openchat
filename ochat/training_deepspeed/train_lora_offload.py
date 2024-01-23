@@ -2,6 +2,8 @@ import argparse
 import os
 import math
 import json
+import shutil
+from pathlib import Path
 from functools import partial
 from typing import Optional, List
 
@@ -14,7 +16,7 @@ import tqdm
 import mlflow
 import numpy as np
 
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
@@ -36,6 +38,8 @@ class TrainingArguments(BaseModel):
     data_prefix: str = Field(...)
     save_path: str = Field(...)
     save_every: Optional[int] = Field(None, gt=0)
+    checkpoint_every: int = Field(0, ge=0)
+    max_checkpoint: int = Field(1, gt=0)
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
     base_lr: float = Field(1e-2)
@@ -95,6 +99,8 @@ def parse_args():
     parser_base.add_argument("--data_prefix",           type=str, required=True)
     parser_base.add_argument("--save_path",             type=str, required=True)
     parser_base.add_argument("--save_every",            type=int, default=None)
+    parser_base.add_argument("--checkpoint_every",      type=int, default=0)
+    parser_base.add_argument("--max_checkpoint",        type=int, default=1)
 
     # Hyperparameters
     parser_base.add_argument("--batch_max_len",         type=int, default=81920)
@@ -195,23 +201,42 @@ def create_distributed_dataloader(args: TrainingArguments, data):
         seed=0
     )
 
+def get_latest_checkpoint(args: TrainingArguments):
+
+    checkpoint_list = sorted([i for i in Path(args.save_path).glob('checkpoint_*') if i.is_dir()], key=lambda x: int(x.name.split('_')[-1]))
+    if checkpoint_list:
+        return str(checkpoint_list[-1])
+
+def clean_checkpoint(args: TrainingArguments):
+
+    checkpoint_list = sorted([i for i in Path(args.save_path).glob('checkpoint_*') if i.is_dir()], key=lambda x: int(x.name.split('_')[-1]))
+    
+    for checkpoint in checkpoint_list[:-args.max_checkpoint]:
+        shutil.rmtree(checkpoint, ignore_errors=True)
 
 def create_model(args: TrainingArguments):
     print(f"Loading model {args.model_type} from {args.model_path}...")
 
+    # get checkpoint
+    model_path = get_latest_checkpoint(args) or args.model_path
+
     # Create model + optimizer + lr scheduler
-    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path)
-    # Create lora config
-    lora_config = LoraConfig(
-            r=args.lora_r,
-            lora_alpha=args.lora_alpha,
-            target_modules=args.lora_target_modules,
-            lora_dropout=args.lora_dropout,
-            bias=args.lora_bias,
-            modules_to_save=args.modules_to_save
-        )
-    # Create Lora Model
-    model = get_peft_model(model, lora_config)
+    if model_path == args.model_path:
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True)
+        # Create lora config
+        lora_config = LoraConfig(
+                r=args.lora_r,
+                lora_alpha=args.lora_alpha,
+                target_modules=args.lora_target_modules,
+                lora_dropout=args.lora_dropout,
+                bias=args.lora_bias,
+                modules_to_save=args.modules_to_save
+            )
+        # Create Lora Model
+        model = get_peft_model(model, lora_config)
+    else:
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True)
+        model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
@@ -341,6 +366,7 @@ def train(args: TrainingArguments):
 
     # Training Loop
     step = 0
+    latest_checkpoint = int((get_latest_checkpoint(args) or '_0').split('_')[-1])
     lr_this_step = None
     for epoch in range(args.epochs):
         print (f"[rank {RANK}]: Epoch {epoch}")
@@ -353,6 +379,9 @@ def train(args: TrainingArguments):
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
+            elif step <= latest_checkpoint:
+                progress_bar.update()
+                continue
 
             # To device
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
@@ -384,6 +413,25 @@ def train(args: TrainingArguments):
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
                 progress_bar.update()  # type: ignore
+            
+            if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
+                dist.barrier()
+
+                if model_engine.zero_optimization_stage() == 3:
+                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
+                elif RANK == 0:
+                    state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
+
+                if RANK == 0:
+                    save_path = os.path.join(args.save_path, f"checkpoint_{step}")
+
+                    model_engine.module.save_pretrained(save_path,
+                                                        state_dict=state_dict)  # type: ignore
+
+                    # Write metadata
+                    save_openchat_metadata(args, epoch, save_path)
+                
+                clean_checkpoint(args)
 
         # Log batch efficiency
         if RANK == 0:
