@@ -370,7 +370,8 @@ def train(args: TrainingArguments):
             if step > train_total_steps:  # At most train_total_steps
                 break
             elif step <= latest_checkpoint:
-                progress_bar.update()
+                if RANK == 0:
+                    progress_bar.update()
                 continue
 
             # To device
