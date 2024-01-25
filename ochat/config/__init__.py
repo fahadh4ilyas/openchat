@@ -106,7 +106,7 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.PhiForCausalLM.from_pretrained,
-                                          torch_dtype=torch.float16),
+                                          torch_dtype=torch.bfloat16),
 
         # Conversation Template
         conversation_template=partial(ConversationTemplate,
@@ -196,7 +196,7 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.PhiForCausalLM.from_pretrained,
-                                          torch_dtype=torch.float16),
+                                          torch_dtype=torch.bfloat16),
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
