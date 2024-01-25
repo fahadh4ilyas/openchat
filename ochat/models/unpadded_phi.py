@@ -215,9 +215,9 @@ class UnpaddedPhiAttention(nn.Module):
 
 
 class UnpaddedPhiDecoderLayer(nn.Module):
-    def __init__(self, config: PhiConfig, layer_idx: int):
+    def __init__(self, config: PhiConfig):
         super().__init__()
-        self.self_attn = UnpaddedPhiAttention(config, layer_idx=layer_idx)
+        self.self_attn = UnpaddedPhiAttention(config)
         self.mlp = UnpaddedPhiMLP(config)
         self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
@@ -298,7 +298,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                                                                       base=config.rope_theta,
                                                                       scaling_factor=config.rope_scaling["factor"])
         self.layers = nn.ModuleList(
-            [UnpaddedPhiDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [UnpaddedPhiDecoderLayer(config) for _ in range(config.num_hidden_layers)]
         )
         self.final_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
