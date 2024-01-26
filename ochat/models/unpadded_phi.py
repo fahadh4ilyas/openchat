@@ -321,6 +321,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
         max_seqlen: int,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
+        nz_hidden_states = self.embed_dropout(nz_hidden_states)
         cos_sin          = self.rotary_emb()
 
         # decoder layers
