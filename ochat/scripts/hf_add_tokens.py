@@ -1,32 +1,26 @@
 import argparse
+import typing
 
 import transformers
-import torch
+
+from pydantic import BaseModel, Field, validator
+
+class Arguments(BaseModel):
+
+    model_path: str = Field(...)
+    save_path: str = Field(...)
+    added_special_tokens: typing.List[str] = Field([])
+    added_tokens: typing.List[str] = Field([])
+
+    @validator('added_tokens')
+    def validate_tokens(cls, value: typing.List[str], values: typing.Dict[str, typing.Any]) -> typing.List[str]:
+        if len(value + values.get('added_special_tokens', [])) == 0:
+            raise ValueError('At least one token added!')
+        return value
 
 
-def hf_add_tokens(model_path, output_dir, added_special_tokens, added_tokens):
+def parse_args():
 
-    if len(added_special_tokens + added_tokens) == 0:
-        raise ValueError('At least one token added!')
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
-    model = transformers.AutoModelForCausalLM.from_pretrained(model_path,
-                                                              low_cpu_mem_usage=True,
-                                                              torch_dtype='auto')
-    # Add tokens (tokenizer)
-    tokenizer.add_tokens(added_special_tokens, special_tokens=True)
-    tokenizer.add_special_tokens({'additional_special_tokens': list(set(tokenizer.special_tokens_map_extended.get('additional_special_tokens', []) + added_special_tokens))}, replace_additional_special_tokens=False)
-    tokenizer.add_tokens(added_tokens)
-
-    # Add tokens (embedding)
-    model.resize_token_embedddings(len(tokenizer))
-
-    # Save
-    tokenizer.save_pretrained(output_dir)
-    model.save_pretrained(output_dir)
-
-
-def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-path",
@@ -49,8 +43,33 @@ def main():
         help="Token list to add"
     )
 
-    hf_add_tokens(**vars(parser.parse_args()))
+    args, _ = parser.parse_known_args()
+
+    return args
+
+
+def main(args: Arguments):
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_path)
+    model = transformers.AutoModelForCausalLM.from_pretrained(args.model_path,
+                                                              low_cpu_mem_usage=True,
+                                                              torch_dtype='auto')
+
+    # Add tokens (tokenizer)
+    tokenizer.add_tokens(args.added_special_tokens, special_tokens=True)
+    tokenizer.add_special_tokens({'additional_special_tokens': list(set(tokenizer.special_tokens_map_extended.get('additional_special_tokens', []) + args.added_special_tokens))}, replace_additional_special_tokens=False)
+    tokenizer.add_tokens(args.added_tokens)
+
+    # Add tokens (embedding)
+    model.resize_token_embedddings(len(tokenizer))
+
+    # Save
+    tokenizer.save_pretrained(args.save_path)
+    model.save_pretrained(args.save_path)
 
 
 if __name__ == "__main__":
-    main()
+
+    args = parse_args()
+    args = Arguments(**vars(args))
+    main(args)
