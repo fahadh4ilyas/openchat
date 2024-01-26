@@ -51,7 +51,7 @@ def parse_args():
 def main(args: Arguments):
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_path)
-    model = transformers.AutoModelForCausalLM.from_pretrained(args.model_path,
+    model: transformers.PreTrainedModel = transformers.AutoModelForCausalLM.from_pretrained(args.model_path,
                                                               low_cpu_mem_usage=True,
                                                               torch_dtype='auto')
 
@@ -61,7 +61,7 @@ def main(args: Arguments):
     tokenizer.add_tokens(args.added_tokens)
 
     # Add tokens (embedding)
-    model.resize_token_embedddings(len(tokenizer))
+    model.resize_token_embeddings(len(tokenizer))
 
     # Save
     tokenizer.save_pretrained(args.save_path)
