@@ -5,12 +5,17 @@ import torch
 
 
 def hf_add_tokens(model_path, output_dir, added_special_tokens, added_tokens):
+
+    if len(added_special_tokens + added_tokens) == 0:
+        raise ValueError('At least one token added!')
+
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
     model = transformers.AutoModelForCausalLM.from_pretrained(model_path,
                                                               low_cpu_mem_usage=True,
-                                                              torch_dtype=torch.bfloat16)
+                                                              torch_dtype='auto')
     # Add tokens (tokenizer)
     tokenizer.add_tokens(added_special_tokens, special_tokens=True)
+    tokenizer.add_special_tokens({'additional_special_tokens': list(set(tokenizer.special_tokens_map_extended.get('additional_special_tokens', []) + added_special_tokens))}, replace_additional_special_tokens=False)
     tokenizer.add_tokens(added_tokens)
 
     # Add tokens (embedding)
@@ -25,7 +30,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-path",
-        help="Location of Mistral model, or HuggingFace repo ID",
+        help="Location of model, or HuggingFace repo ID",
     )
     parser.add_argument(
         "--output-dir",
@@ -34,7 +39,7 @@ def main():
     parser.add_argument(
         "--added-special-tokens",
         type=str,
-        nargs="+",
+        nargs="*",
         help="Special token list to add"
     )
     parser.add_argument(
