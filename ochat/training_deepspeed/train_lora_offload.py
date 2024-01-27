@@ -414,7 +414,7 @@ def train(args: TrainingArguments):
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
                 progress_bar.update()  # type: ignore
-            
+
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
                 dist.barrier()
 
@@ -431,66 +431,68 @@ def train(args: TrainingArguments):
 
                     # Write metadata
                     save_openchat_metadata(args, epoch, save_path)
-                
-                clean_checkpoint(args)
 
-        # Log batch efficiency
-        if RANK == 0:
-            mlflow.log_metrics(metrics={"batch_efficiency": train_loader.efficiency()}, step=step)
+                    clean_checkpoint(args)
 
-        ############ Eval Epoch
-        if eval_loader is not None:
-            model_engine.eval()
+        if step > latest_checkpoint:
 
-            eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
-            eval_total_steps = 0
+            # Log batch efficiency
+            if RANK == 0:
+                mlflow.log_metrics(metrics={"batch_efficiency": train_loader.efficiency()}, step=step)
 
-            eval_loader.set_epoch(epoch)
-            with torch.inference_mode():
-                for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
-                    # To device
-                    batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
+            ############ Eval Epoch
+            if eval_loader is not None:
+                model_engine.eval()
 
-                    # Eval
-                    eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+                eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
+                eval_total_steps = 0
 
-                    if isinstance(loss, tuple):
-                        eval_loss, _ = eval_loss
+                eval_loader.set_epoch(epoch)
+                with torch.inference_mode():
+                    for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
+                        # To device
+                        batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
+
+                        # Eval
+                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+
+                        if isinstance(loss, tuple):
+                            eval_loss, _ = eval_loss
+                        
+                        # Accumulate eval loss
+                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+                        eval_total_steps += 1
+
+                # Gather eval loss (reduce sum)
+                eval_total_metric.div_(eval_total_steps)
+                dist.reduce(eval_total_metric, 0)
+
+                if RANK == 0:
+                    eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                    mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+
+            ############ Save Checkpoint
+            # Save model with lean state dict
+            # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
+            if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
+                dist.barrier()
+
+                if model_engine.zero_optimization_stage() == 3:
+                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
+                elif RANK == 0:
+                    state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
+
+                if RANK == 0:
+                    save_path = os.path.join(args.save_path, f"ep_{epoch}")
+
+                    model_engine.module.save_pretrained(save_path,
+                                                        state_dict=state_dict)  # type: ignore
                     
-                    # Accumulate eval loss
-                    eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
-                    eval_total_steps += 1
+                    # Also save tokenizer from base model
+                    save_tokenizer(args, save_path)
 
-            # Gather eval loss (reduce sum)
-            eval_total_metric.div_(eval_total_steps)
-            dist.reduce(eval_total_metric, 0)
-
-            if RANK == 0:
-                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
-
-        ############ Save Checkpoint
-        # Save model with lean state dict
-        # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
-        if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
-            dist.barrier()
-
-            if model_engine.zero_optimization_stage() == 3:
-                state_dict = model_engine._zero3_consolidated_16bit_state_dict()
-            elif RANK == 0:
-                state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
-
-            if RANK == 0:
-                save_path = os.path.join(args.save_path, f"ep_{epoch}")
-
-                model_engine.module.save_pretrained(save_path,
-                                                    state_dict=state_dict)  # type: ignore
-                
-                # Also save tokenizer from base model
-                save_tokenizer(args, save_path)
-
-                # Write metadata
-                save_openchat_metadata(args, epoch, save_path)
+                    # Write metadata
+                    save_openchat_metadata(args, epoch, save_path)
     
     if RANK == 0:
         mlflow.end_run()

@@ -397,52 +397,54 @@ def train(args: TrainingArguments):
 
                 clean_checkpoint(args)
 
-        # Log batch efficiency
-        mlflow.log_metrics(metrics={"batch_efficiency": train_loader.efficiency()}, step=step)
+        if step > latest_checkpoint:
 
-        ############ Eval Epoch
-        if eval_loader is not None:
-            model.eval()
+            # Log batch efficiency
+            mlflow.log_metrics(metrics={"batch_efficiency": train_loader.efficiency()}, step=step)
 
-            eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
-            eval_total_steps = 0
+            ############ Eval Epoch
+            if eval_loader is not None:
+                model.eval()
 
-            eval_loader.set_epoch(epoch)
-            with torch.inference_mode():
-                for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
-                    # To device
-                    batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
+                eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
+                eval_total_steps = 0
 
-                    # Eval
-                    eval_loss, eval_acc = model(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+                eval_loader.set_epoch(epoch)
+                with torch.inference_mode():
+                    for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
+                        # To device
+                        batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
-                    if isinstance(loss, tuple):
-                        eval_loss, _ = eval_loss
-                    
-                    # Accumulate eval loss
-                    eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
-                    eval_total_steps += 1
+                        # Eval
+                        eval_loss, eval_acc = model(**batch_tensor, **batch_info, num_seq=all_numseq).loss
 
-            # Gather eval loss (reduce sum)
-            eval_total_metric.div_(eval_total_steps)
+                        if isinstance(loss, tuple):
+                            eval_loss, _ = eval_loss
+                        
+                        # Accumulate eval loss
+                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+                        eval_total_steps += 1
 
-            eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-            mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+                # Gather eval loss (reduce sum)
+                eval_total_metric.div_(eval_total_steps)
 
-        ############ Save Checkpoint
-        # Save model with lean state dict
-        # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
-        if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
+                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
 
-            save_path = os.path.join(args.save_path, f"ep_{epoch}")
+            ############ Save Checkpoint
+            # Save model with lean state dict
+            # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
+            if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
 
-            model.save_pretrained(save_path)  # type: ignore
+                save_path = os.path.join(args.save_path, f"ep_{epoch}")
 
-            # Also save tokenizer from base model
-            save_tokenizer(args, save_path)
+                model.save_pretrained(save_path)  # type: ignore
 
-            # Write metadata
-            save_openchat_metadata(args, epoch, save_path)
+                # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
+
+                # Write metadata
+                save_openchat_metadata(args, epoch, save_path)
     
     mlflow.end_run()
 
