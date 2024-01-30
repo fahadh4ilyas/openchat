@@ -272,9 +272,10 @@ def save_tokenizer(args: TrainingArguments, save_path):
     MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(args.model_path).save_pretrained(save_path)
 
 
-def save_openchat_metadata(args: TrainingArguments, epoch, save_path):
+def save_openchat_metadata(args: TrainingArguments, epoch, latest_step, save_path):
     metadata = vars(args)
     metadata["epoch"] = epoch
+    metadata["latest_step"] = latest_step
 
     with open(os.path.join(save_path, "openchat.json"), "w") as f:
         json.dump(metadata, f, default=lambda o: "<non-serializable>")
@@ -400,7 +401,7 @@ def train(args: TrainingArguments):
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
                 progress_bar.update()  # type: ignore
-            
+
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
                 dist.barrier()
 
@@ -416,8 +417,8 @@ def train(args: TrainingArguments):
                                                         state_dict=state_dict)  # type: ignore
 
                     # Write metadata
-                    save_openchat_metadata(args, epoch, save_path)
-                
+                    save_openchat_metadata(args, epoch, step, save_path)
+
                     clean_checkpoint(args)
 
         if step > latest_checkpoint:
@@ -478,7 +479,7 @@ def train(args: TrainingArguments):
                     save_tokenizer(args, save_path)
 
                     # Write metadata
-                    save_openchat_metadata(args, epoch, save_path)
+                    save_openchat_metadata(args, epoch, step, save_path)
     
     if RANK == 0:
         mlflow.end_run()
