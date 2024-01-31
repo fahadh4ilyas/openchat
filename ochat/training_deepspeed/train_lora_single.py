@@ -394,7 +394,7 @@ def train(args: TrainingArguments):
                 model.save_pretrained(save_path)  # type: ignore
 
                 # Write metadata
-                save_openchat_metadata(args, epoch, step, save_path)
+                save_openchat_metadata(args, epoch + 1, step, save_path)
 
                 clean_checkpoint(args)
 
@@ -437,7 +437,7 @@ def train(args: TrainingArguments):
             # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
             if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
 
-                save_path = os.path.join(args.save_path, f"ep_{epoch}")
+                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
                 model.save_pretrained(save_path)  # type: ignore
 
@@ -445,7 +445,7 @@ def train(args: TrainingArguments):
                 save_tokenizer(args, save_path)
 
                 # Write metadata
-                save_openchat_metadata(args, epoch, step, save_path)
+                save_openchat_metadata(args, epoch + 1, step, save_path)
     
     mlflow.end_run()
 

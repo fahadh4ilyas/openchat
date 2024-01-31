@@ -421,7 +421,7 @@ def train(args: TrainingArguments):
                                                         state_dict=state_dict)  # type: ignore
 
                     # Write metadata
-                    save_openchat_metadata(args, epoch, step, save_path)
+                    save_openchat_metadata(args, epoch + 1, step, save_path)
 
                     clean_checkpoint(args)
 
@@ -474,7 +474,7 @@ def train(args: TrainingArguments):
                     state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
 
                 if RANK == 0:
-                    save_path = os.path.join(args.save_path, f"ep_{epoch}")
+                    save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
                     model_engine.module.save_pretrained(save_path,
                                                         state_dict=state_dict)  # type: ignore
@@ -483,7 +483,7 @@ def train(args: TrainingArguments):
                     save_tokenizer(args, save_path)
 
                     # Write metadata
-                    save_openchat_metadata(args, epoch, step, save_path)
+                    save_openchat_metadata(args, epoch + 1, step, save_path)
     
     if RANK == 0:
         mlflow.end_run()
