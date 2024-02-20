@@ -4,7 +4,7 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
-from typing import Optional, List
+from typing import List
 import argparse
 import os
 import random

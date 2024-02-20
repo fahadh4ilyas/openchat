@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Iterable, List, Dict
+from typing import Optional, Union, Callable, Iterable, List
 
 from pydantic import BaseModel
 
@@ -9,13 +9,20 @@ class Message(BaseModel):
 
     weight: Optional[float] = None
 
+class MessageWithName(BaseModel):
+    role: str
+    content: str
+    name: Optional[str] = None
+
+    weight: Optional[float] = None
+
 class ChatMLMessage(BaseModel):
     message: str
     weight: float
 
 
 class Conversation(BaseModel):
-    items: List[Message]
+    items: List[Union[Message, MessageWithName]]
 
     condition: str = ""
     system: str = ""
@@ -55,7 +62,10 @@ class ConversationTemplate(BaseModel):
         for conv in conversations:
             sys_mappings.add(conv.system)
             for msg in conv.items:
-                role_mappings.add((msg.role, conv.condition or default_condition))
+                role = msg.role
+                if hasattr(msg, 'name') and msg.name is not None:
+                    role = msg.name
+                role_mappings.add((role, conv.condition or default_condition))
                 all_text.append(msg.content)
 
         sys_mappings = list(sys_mappings)
@@ -156,7 +166,10 @@ class ChatMLConversationTemplate(BaseModel):
             prompts.append(ChatMLMessage(message=self.prompt_format.format(role='system', text=conversation.system), weight=0.0))
         
         for message in conversation.items:
-            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(message.role, conversation.condition or default_condition), text=message.content), weight=message.weight))
+            role = message.role
+            if hasattr(message, 'name') and message.name is not None:
+                role = message.name
+            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition), text=message.content), weight=message.weight))
         
         return prompts
 

@@ -17,7 +17,7 @@ _V3_2_PREFIXES = {
 
 
 def _v3_2_role_prefix(from_role, condition):
-    return f"{condition} {_V3_2_PREFIXES[from_role]}".strip()
+    return f"{condition} {_V3_2_PREFIXES.get(from_role, from_role+':')}".strip()
 
 def _chatml_role_prefix(from_role, condition):
     return f"{condition} {from_role}".strip()
