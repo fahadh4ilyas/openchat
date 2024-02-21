@@ -51,6 +51,8 @@ class TrainingArguments(BaseModel):
     beta2: float = Field(0.95)
     eps: float = Field(1e-5)
     tracking_uri: Optional[str] = Field(None)
+    mlflow_username: Optional[str] = Field(None)
+    mlflow_password: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
     lora_alpha: int = Field(32)
@@ -120,6 +122,8 @@ def parse_args():
 
     # MLFLOW
     parser_base.add_argument("--tracking_uri",          type=str, default=None)
+    parser_base.add_argument("--mlflow_username",       type=str, default=None)
+    parser_base.add_argument("--mlflow_password",       type=str, default=None)
     parser_base.add_argument("--experiment_name",       type=str, required=True)
     parser_base.add_argument("--run_name",              type=str, required=True)
 
@@ -346,6 +350,10 @@ def train(args: TrainingArguments):
 
         if args.tracking_uri:
             mlflow.set_tracking_uri(args.tracking_uri)
+        if args.mlflow_username:
+            os.environ['MLFLOW_TRACKING_USERNAME'] = args.mlflow_username
+        if args.mlflow_password:
+            os.environ['MLFLOW_TRACKING_PASSWORD'] = args.mlflow_username
         mlflow.set_experiment(args.experiment_name)
         mlflow.start_run(run_name=args.run_name)
         metadata = vars(args).copy()
