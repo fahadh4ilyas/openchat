@@ -86,7 +86,7 @@ class UnpaddedGemmaRMSNorm(nn.Module):
         """
         super().__init__()
 
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = nn.Parameter(torch.zeros(hidden_size))
         self.variance_epsilon = eps
 
     def forward(self, hidden_states):
