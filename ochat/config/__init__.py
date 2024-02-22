@@ -4,7 +4,7 @@ import torch
 import transformers
 
 from ochat.config.model_config import ModelConfig
-from ochat.config.conversation_template import ConversationTemplate, ChatMLConversationTemplate
+from ochat.config.conversation_template import Conversation, ConversationTemplate, ChatMLConversationTemplate
 import ochat.models
 
 
