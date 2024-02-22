@@ -4,7 +4,7 @@ import torch
 import transformers
 
 from ochat.config.model_config import ModelConfig
-from ochat.config.conversation_template import Message, Conversation, ConversationTemplate, ChatMLConversationTemplate
+from ochat.config.conversation_template import ConversationTemplate, ChatMLConversationTemplate
 import ochat.models
 
 
@@ -15,12 +15,19 @@ _V3_2_PREFIXES = {
     "assistant": "Assistant:"
 }
 
+PREFIXES = {
+    "gemma": {
+        "user": "user",
+        "assistant": "model"
+    }
+}
+
 
 def _v3_2_role_prefix(from_role, condition):
     return f"{condition} {_V3_2_PREFIXES.get(from_role, from_role+':')}".strip()
 
-def _chatml_role_prefix(from_role, condition):
-    return f"{condition} {from_role}".strip()
+def _chatml_role_prefix(from_role, condition, model):
+    return f"{condition} {PREFIXES.get(model, {}).get(from_role, from_role)}".strip()
 
 
 MODEL_CONFIG_MAP = {
@@ -140,6 +147,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='llama',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4")
@@ -155,6 +163,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='llama',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4")
@@ -170,6 +179,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='mistral',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4 correct")
@@ -185,6 +195,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='mistral',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4 correct")
@@ -200,6 +211,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='mixtral',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4 correct")
@@ -215,6 +227,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='phi',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
                                       inference_condition="GPT4 correct")
@@ -230,8 +243,9 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='gemma',
                                       role_prefix=_chatml_role_prefix,
-                                      prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+                                      prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
                                       inference_condition="GPT4 correct")
     ),
 
@@ -245,6 +259,7 @@ MODEL_CONFIG_MAP = {
 
         # Conversation Template
         conversation_template=partial(ChatMLConversationTemplate,
+                                      model='mistral',
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|{role}|>\n{text}</s>",
                                       inference_condition="")

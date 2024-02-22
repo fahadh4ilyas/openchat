@@ -138,6 +138,8 @@ class ConversationTemplate(BaseModel):
 class ChatMLConversationTemplate(BaseModel):
     tokenizer: Callable
 
+    model: str
+
     # Prompt
     role_prefix: Callable
 
@@ -169,7 +171,7 @@ class ChatMLConversationTemplate(BaseModel):
             role = message.role
             if hasattr(message, 'name') and message.name is not None:
                 role = message.name
-            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition), text=message.content), weight=message.weight))
+            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition, self.model), text=message.content), weight=message.weight))
         
         return prompts
 
