@@ -98,7 +98,7 @@ class UnpaddedGemmaRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
         t = torch.arange(max_position_embeddings, dtype=torch.float32, device=device)
         freqs = torch.outer(t, inv_freq)
 
@@ -259,7 +259,7 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedGemmaRotaryEmbedding(config.hidden_size // config.num_attention_heads,
+        self.rotary_emb   = UnpaddedGemmaRotaryEmbedding(config.head_dim,
                                                          max_position_embeddings=config.max_position_embeddings,
                                                          base=config.rope_theta)
 
