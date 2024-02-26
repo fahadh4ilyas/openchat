@@ -166,6 +166,8 @@ class UnpaddedGemmaAttention(nn.Module):
 
         # RoPE
         cos, sin = cos_sin
+        cos = cos.to(value_states.dtype)
+        sin = sin.to(value_states.dtype)
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids)
 
         # flash attn
