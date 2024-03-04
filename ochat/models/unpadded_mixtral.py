@@ -166,6 +166,7 @@ class UnpaddedMixtralAttention(nn.Module):
         self.head_dim = self.hidden_size // self.num_heads
         self.num_key_value_heads = config.num_key_value_heads
         self.sliding_window = config.sliding_window
+        self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -205,7 +206,8 @@ class UnpaddedMixtralAttention(nn.Module):
             cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
             max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
 
-            dropout_p=0.0, causal=True)
+            dropout_p=self.attention_dropout if self.training else 0.0, causal=True,
+            window_size=(self.sliding_window, self.sliding_window) if self.sliding_window is not None else (-1, -1))
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore

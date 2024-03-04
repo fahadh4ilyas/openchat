@@ -193,6 +193,7 @@ class UnpaddedLlamaAttention(nn.Module):
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
         self.num_key_value_heads = config.num_key_value_heads if config.num_key_value_heads is not None else config.num_attention_heads
+        self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -200,10 +201,10 @@ class UnpaddedLlamaAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
     def forward(
         self,
@@ -231,7 +232,7 @@ class UnpaddedLlamaAttention(nn.Module):
             q=query_states, k=key_states, v=value_states,
             cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
             max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-            dropout_p=0.0, causal=True)
+            dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
