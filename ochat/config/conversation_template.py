@@ -6,12 +6,6 @@ from pydantic import BaseModel
 class Message(BaseModel):
     role: str
     content: str
-
-    weight: Optional[float] = None
-
-class MessageWithName(BaseModel):
-    role: str
-    content: str
     name: Optional[str] = None
 
     weight: Optional[float] = None
@@ -22,7 +16,7 @@ class ChatMLMessage(BaseModel):
 
 
 class Conversation(BaseModel):
-    items: List[Union[Message, MessageWithName]]
+    items: List[Message]
 
     condition: str = ""
     system: str = ""
@@ -63,7 +57,7 @@ class ConversationTemplate(BaseModel):
             sys_mappings.add(conv.system)
             for msg in conv.items:
                 role = msg.role
-                if hasattr(msg, 'name') and msg.name is not None:
+                if msg.name is not None:
                     role = msg.name
                 role_mappings.add((role, conv.condition or default_condition))
                 all_text.append(msg.content)
@@ -169,7 +163,7 @@ class ChatMLConversationTemplate(BaseModel):
         
         for message in conversation.items:
             role = message.role
-            if hasattr(message, 'name') and message.name is not None:
+            if message.name is not None:
                 role = message.name
             prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition, self.model), text=message.content), weight=message.weight))
         
