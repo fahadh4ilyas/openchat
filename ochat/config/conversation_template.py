@@ -34,19 +34,21 @@ class ConversationTemplate(BaseModel):
     # Private
     bos_tokens_: List[int]
     eot_tokens_: List[int]
+    eos_tokens_: List[int]
 
     def __init__(self, **data):
         tokenizer = data["tokenizer"]
         eot = data["eot"]
         bos_tokens_ = tokenizer("").input_ids
         eot_tokens_ = tokenizer(eot, add_special_tokens=False).input_ids
+        eos_tokens_ = [tokenizer.eos_token_id]
 
-        super().__init__(**data, bos_tokens_=bos_tokens_, eot_tokens_=eot_tokens_)
+        super().__init__(**data, bos_tokens_=bos_tokens_, eot_tokens_=eot_tokens_, eos_tokens_=eos_tokens_)
 
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
         return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
 
-    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False):
+    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_add_eos: bool = False):
         # Pre-tokenize all conversations
         default_condition = self.inference_condition if inference else ""
 
@@ -110,7 +112,7 @@ class ConversationTemplate(BaseModel):
 
                     w = msg.weight
                     if seq_level_weight:
-                        w /= len(text) + len(self.eot_tokens_)
+                        w /= len(text) + len(self.eot_tokens_) + (len(self.eos_tokens_) if self.eos_tokens_[0] != self.eot_tokens_[0] and force_add_eos else 0)
 
                 # Message tokens
                 tokens.extend(text)
@@ -119,6 +121,9 @@ class ConversationTemplate(BaseModel):
                 if not (inference and idx == last_idx):  # Do not add EOT on last turn during inference
                     tokens.extend(self.eot_tokens_)
                     weights.extend([w] * len(self.eot_tokens_))
+                    if self.eos_tokens_[0] != self.eot_tokens_[0] and force_add_eos:
+                        tokens.extend(self.eos_tokens_)
+                        weights.extend([w] * len(self.eos_tokens_))
 
             # Append result
             result_tokens.append(tokens)
@@ -143,14 +148,16 @@ class ChatMLConversationTemplate(BaseModel):
     inference_condition: Optional[str] = None
 
     bos_tokens_: List[int]
+    eos_tokens_: List[int]
 
     def __init__(self, **data):
         tokenizer = data["tokenizer"]
 
         sep = tokenizer('\n', add_special_tokens=False).input_ids
         bos_tokens_ = tokenizer("").input_ids
+        eos_tokens_ = [tokenizer.eos_token_id]
 
-        super().__init__(**data, sep=sep, bos_tokens_=bos_tokens_)
+        super().__init__(**data, sep=sep, bos_tokens_=bos_tokens_, eos_tokens_=eos_tokens_)
     
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
         return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
@@ -169,7 +176,7 @@ class ChatMLConversationTemplate(BaseModel):
         
         return prompts
 
-    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False):
+    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_add_eos: bool = False):
 
         default_condition = self.inference_condition if inference else ""
 
@@ -189,6 +196,8 @@ class ChatMLConversationTemplate(BaseModel):
                 if msg.weight == 0:
                     weights.extend([0.0] * len(token_msg))
                 else:
+                    if force_add_eos and token_msg[-1] != self.eos_tokens_[0]:
+                        token_msg.extend(self.eos_tokens_)
                     first_index = token_msg.index(self.sep[-1])
                     weights.extend([0.0] * first_index)
                     rest_index = len(token_msg[first_index:])
