@@ -197,6 +197,7 @@ class ChatMLConversationTemplate(BaseModel):
                     weights.extend([0.0] * len(token_msg))
                 else:
                     if force_eos_token and token_msg[-1] != self.eos_tokens_[0]:
+                        tokens.extend(self.eos_tokens_)
                         token_msg.extend(self.eos_tokens_)
                     first_index = token_msg.index(self.sep[-1])
                     weights.extend([0.0] * first_index)
