@@ -164,6 +164,9 @@ class UnpaddedPhiAttention(nn.Module):
                 config.hidden_size // self.num_heads, eps=config.layer_norm_eps, elementwise_affine=True
             )
 
+    # Phi-2 has an attention overflow issue (with FP16) and requires autocast to be disabled
+    @torch.autocast("cpu", enabled=False)
+    @torch.autocast("cuda", enabled=False)
     def forward(
         self,
         cos_sin: Tuple[torch.Tensor, torch.Tensor],
