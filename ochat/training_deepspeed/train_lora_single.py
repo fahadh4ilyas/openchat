@@ -256,7 +256,7 @@ def create_model(args: TrainingArguments):
     model.enable_input_require_grads()
 
     # Optimizer
-    optimizer = torch.optim.AdamW(model.parameters(),
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
                                   lr=args.lr,
                                   weight_decay=args.weight_decay,
                                   betas=(args.beta1, args.beta2),

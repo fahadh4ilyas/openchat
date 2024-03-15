@@ -274,8 +274,10 @@ def create_model(args: TrainingArguments):
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
+    model_parameters = [p for p in model.parameters() if p.requires_grad]
+
     # Optimizer
-    optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
+    optimizer = deepspeed.ops.adam.FusedAdam(model_parameters,
                                              lr=args.lr,
                                              weight_decay=args.weight_decay,
                                              betas=(args.beta1, args.beta2),
@@ -284,7 +286,7 @@ def create_model(args: TrainingArguments):
     # DeepSpeed model
     model_engine, optimizer, _, _ = deepspeed.initialize(args=args,
                                                          model=model,
-                                                         model_parameters=model.parameters(),
+                                                         model_parameters=model_parameters,
                                                          optimizer=optimizer)
 
     # Put deepspeed arguments
