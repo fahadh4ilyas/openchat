@@ -5,3 +5,4 @@ from ochat.models.unpadded_mistral_yarn import MistralForCausalLM as MistralYarn
 from ochat.models.unpadded_mixtral import MixtralForCausalLM
 from ochat.models.unpadded_gemma import GemmaForCausalLM
 from ochat.models.unpadded_phi import PhiForCausalLM
+from ochat.models.unpadded_phi_ori import PhiForCausalLM as OriPhiForCausalLM

@@ -121,13 +121,13 @@ class UnpaddedPhiMLP(nn.Module):
         super().__init__()
 
         self.activation_fn = ACT2FN[config.hidden_act]
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.gate_proj(hidden_states)
+        hidden_states = self.fc1(hidden_states)
         hidden_states = self.activation_fn(hidden_states)
-        hidden_states = self.down_proj(hidden_states)
+        hidden_states = self.fc2(hidden_states)
         return hidden_states
 
 
@@ -153,7 +153,7 @@ class UnpaddedPhiAttention(nn.Module):
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=True)
+        self.dense = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=True)
 
         self.qk_layernorm = config.qk_layernorm
         if self.qk_layernorm:
@@ -191,11 +191,11 @@ class UnpaddedPhiAttention(nn.Module):
             key_states[..., : self.rotary_dim],
             key_states[..., self.rotary_dim :],
         )
-        # [batch_size, seq_length, num_heads, head_dim // config.partial_rotary_factor]
+        # [seq_length, num_heads, head_dim // config.partial_rotary_factor]
         cos, sin = cos_sin
         query_states, key_states = apply_rotary_pos_emb(query_rot, key_rot, cos, sin, nz_position_ids)
 
-        # [batch_size, seq_length, num_heads, head_dim]
+        # [seq_length, num_heads, head_dim]
         query_states = torch.cat((query_rot, query_pass), dim=-1)
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
