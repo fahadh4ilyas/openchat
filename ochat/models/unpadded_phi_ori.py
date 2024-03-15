@@ -207,7 +207,7 @@ class UnpaddedPhiAttention(nn.Module):
             dropout_p=self.attention_dropout, causal=True)
 
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
-        return self.o_proj(attn_output)
+        return self.dense(attn_output)
 
 
 class UnpaddedPhiDecoderLayer(nn.Module):
