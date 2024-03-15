@@ -135,6 +135,12 @@ def parse_args():
     parser_lora.add_argument("--lora_bias",             type=str, default="none")
     parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
 
+    # QLORA
+    parser_lora.add_argument("--use_qlora",             action='store_true')
+    parser_lora.add_argument("--quant_bits",            type=int, default=4)
+    parser_lora.add_argument("--quant_type_4bit",       type=str, default='nf4')
+    parser_lora.add_argument("--use_double_quant_4bit", action='store_true')
+
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
 

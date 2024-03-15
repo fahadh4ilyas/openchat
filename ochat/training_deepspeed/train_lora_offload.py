@@ -16,13 +16,14 @@ import tqdm
 import mlflow
 import numpy as np
 
-from peft import LoraConfig, get_peft_model, PeftModel
+from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
 
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 
 from transformers.integrations import HfDeepSpeedConfig
+from transformers import BitsAndBytesConfig
 
 try:
     import deepspeed
@@ -61,6 +62,10 @@ class TrainingArguments(BaseModel):
     lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
     lora_bias: str = Field("none")
     modules_to_save: Optional[List[str]] = Field(None)
+    use_qlora: bool = Field(False)
+    quant_bits: int = Field(4)
+    quant_type_4bit: str = Field("nf4")
+    use_double_quant_4bit: bool = Field(False)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -136,6 +141,12 @@ def parse_args():
     parser_base.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
     parser_base.add_argument("--lora_bias",             type=str, default="none")
     parser_base.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
+
+    # QLORA
+    parser_base.add_argument("--use_qlora",             action='store_true')
+    parser_base.add_argument("--quant_bits",            type=int, default=4)
+    parser_base.add_argument("--quant_type_4bit",       type=str, default='nf4')
+    parser_base.add_argument("--use_double_quant_4bit", action='store_true')
 
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
@@ -226,9 +237,21 @@ def create_model(args: TrainingArguments):
     # get checkpoint
     model_path = get_latest_checkpoint(args) or args.model_path
 
+    quantization_config = None
+    if args.use_qlora:
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=args.quant_bits == 8,
+            load_in_4bit=args.quant_bits == 4,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type=args.quant_type_4bit,
+            bnb_4bit_use_double_quant=args.use_double_quant_4bit
+        )
+
     # Create model + optimizer + lr scheduler
     if model_path == args.model_path:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True)
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True, quantization_config=quantization_config)
+        if args.use_qlora:
+            model = prepare_model_for_kbit_training(model)
         # Create lora config
         lora_config = LoraConfig(
                 r=args.lora_r,
@@ -241,7 +264,9 @@ def create_model(args: TrainingArguments):
         # Create Lora Model
         model = get_peft_model(model, lora_config)
     else:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True)
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True, quantization_config=quantization_config)
+        if args.use_qlora:
+            model = prepare_model_for_kbit_training(model)
         model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
