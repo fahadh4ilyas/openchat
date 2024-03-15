@@ -238,6 +238,7 @@ def create_model(args: TrainingArguments):
     model_path = get_latest_checkpoint(args) or args.model_path
 
     quantization_config = None
+    device_map = None
     if args.use_qlora:
         quantization_config = BitsAndBytesConfig(
             load_in_8bit=args.quant_bits == 8,
@@ -246,10 +247,11 @@ def create_model(args: TrainingArguments):
             bnb_4bit_quant_type=args.quant_type_4bit,
             bnb_4bit_use_double_quant=args.use_double_quant_4bit
         )
+        device_map = f'cuda:{args.local_rank}'
 
     # Create model + optimizer + lr scheduler
     if model_path == args.model_path:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True, quantization_config=quantization_config)
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True, device_map=device_map, quantization_config=quantization_config)
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         # Create lora config
