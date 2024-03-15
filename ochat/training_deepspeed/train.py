@@ -43,6 +43,7 @@ class TrainingArguments(BaseModel):
     max_checkpoint: int = Field(1, gt=0)
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
+    use_zero_one_opt: bool = Field(False)
     base_lr: float = Field(3e-4)
     lr: Optional[float] = Field(None)
     lr_min_ratio: float = Field(0.1)
@@ -108,6 +109,7 @@ def parse_args():
     parser_base.add_argument("--epochs",                type=int,   default=5)
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
+    parser_base.add_argument("--use_zero_one_opt",      action='store_true')
     parser_base.add_argument("--base_lr",               type=float, default=3e-4)
     parser_base.add_argument("--lr",                    type=float, default=None)
     parser_base.add_argument("--lr_min_ratio",          type=float, default=0.1)
@@ -244,7 +246,14 @@ def create_model(args: TrainingArguments):
     model.gradient_checkpointing_enable()
 
     # Optimizer
-    optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
+    if args.use_zero_one_opt:
+        optimizer = deepspeed.runtime.fp16.onebit.zoadam.ZeroOneAdam(model.parameters(),
+                                             lr=args.lr,
+                                             weight_decay=args.weight_decay,
+                                             betas=(args.beta1, args.beta2),
+                                             eps=args.eps)
+    else:
+        optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
                                              lr=args.lr,
                                              weight_decay=args.weight_decay,
                                              betas=(args.beta1, args.beta2),
@@ -513,6 +522,7 @@ if __name__ == "__main__":
     use_offload = False
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
         use_offload = True
+        args.use_zero_one_opt = False
     if args_lora_confirm.use_lora or args_lora.use_qlora:
         args = {**args.dict(), **vars(args_lora)}
         if use_offload:
