@@ -21,7 +21,8 @@ dependencies = [
     "ray", 
     "sentencepiece", 
     "transformers>=4.38.0",
-    "peft", 
+    "peft",
+    "bitsandbytes",
     "accelerate", 
     "protobuf",
     "pydantic"
