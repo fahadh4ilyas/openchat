@@ -513,7 +513,7 @@ if __name__ == "__main__":
     use_offload = False
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
         use_offload = True
-    if args_lora_confirm.use_lora:
+    if args_lora_confirm.use_lora or args_lora.use_qlora:
         args = {**args.dict(), **vars(args_lora)}
         if use_offload:
             args = LoraOffloadTrainingArguments(**args)
