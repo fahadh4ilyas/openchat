@@ -80,6 +80,8 @@ BATCH_KEYS = {
     "nz_shifted_loss_weights": torch.bfloat16
 }
 
+MODEL_LR = ['mistral', 'qwen2', 'mixtral']
+
 
 def _find_multiple(a, b):
     return (-(a // -b)) * b
@@ -292,7 +294,7 @@ def calculate_auto_lr(base_lr, lr, batch_max_len, model_type, train_dataset):
     # Llama hyperparameters
     # FIXME: Only 7B/13B is supported
     base_bs = 4_000_000
-    if "mistral" in model_type.lower():
+    if any([x in model_type.lower() for x in MODEL_LR]):
         base_lr /= 6.0
 
     loss_weights = np.concatenate(train_dataset["nz_shifted_loss_weights"])
