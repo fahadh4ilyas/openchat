@@ -89,7 +89,10 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
 
     # Tokenize
     print ("Tokenizing ...")
-    tokens_list, weights_list = conv_template.tokenize_conversations(batch, inference=False, seq_level_weight=per_sequence_loss, force_eos_token=force_eos_token)
+    tokens_list = []
+    weights_list = []
+    if len(batch) > 0:
+        tokens_list, weights_list = conv_template.tokenize_conversations(batch, inference=False, seq_level_weight=per_sequence_loss, force_eos_token=force_eos_token)
 
     # Generate data
     print ("Generating ...")
