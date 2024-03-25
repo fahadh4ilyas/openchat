@@ -60,6 +60,7 @@ class TrainingArguments(BaseModel):
     deepspeed: bool = Field(True)
     deepspeed_config: str = Field(...)
     deepspeed_mpi: bool = Field(False)
+    ds_zero_op: int = Field(0)
     device: Optional[str] = Field(None)
 
     @validator('batch_max_len')
@@ -239,7 +240,7 @@ def create_model(args: TrainingArguments):
     model_path = get_latest_checkpoint(args) or args.model_path
 
     # Create model + optimizer + lr scheduler
-    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path)
+    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
@@ -508,10 +509,14 @@ def train(args: TrainingArguments):
 if __name__ == "__main__":
     args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
+    with open(args.deepspeed_config) as f:
+        deepspeed_config = json.load(f)
+    args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
     args.use_zero_one_opt = False
     if args_lora_confirm.use_lora:
         args = {**args.dict(), **vars(args_lora)}
         args = LoraTrainingArguments(**args)
+        args.use_qlora = False
         lora_train(args)
     else:
         train(args)

@@ -5,6 +5,14 @@
 
     "zero_optimization": {
         "stage": 3,
+        "offload_optimizer": {
+            "device": "cpu",
+            "pin_memory": true
+        },
+        "offload_param": {
+            "device": "cpu",
+            "pin_memory": true
+        },
         "overlap_comm": true,
         "stage3_gather_16bit_weights_on_model_save": true
     },

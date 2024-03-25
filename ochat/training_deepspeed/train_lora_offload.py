@@ -72,6 +72,7 @@ class TrainingArguments(BaseModel):
     deepspeed: bool = Field(True)
     deepspeed_config: str = Field(...)
     deepspeed_mpi: bool = Field(False)
+    ds_zero_op: int = Field(0)
     device: Optional[str] = Field(None)
 
     @validator('batch_max_len')
@@ -247,23 +248,9 @@ def create_model(args: TrainingArguments):
     # get checkpoint
     model_path = get_latest_checkpoint(args) or args.model_path
 
-    quantization_config = None
-    device_map = None
-    if args.use_qlora:
-        quantization_config = BitsAndBytesConfig(
-            load_in_8bit=args.quant_bits == 8,
-            load_in_4bit=args.quant_bits == 4,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_quant_type=args.quant_type_4bit,
-            bnb_4bit_use_double_quant=args.use_double_quant_4bit
-        )
-        device_map = f'cuda:{args.local_rank}'
-
     # Create model + optimizer + lr scheduler
     if model_path == args.model_path:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=True, device_map=device_map, quantization_config=quantization_config)
-        if args.use_qlora:
-            model = prepare_model_for_kbit_training(model)
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
         # Create lora config
         lora_config = LoraConfig(
                 r=args.lora_r,
@@ -276,9 +263,7 @@ def create_model(args: TrainingArguments):
         # Create Lora Model
         model = get_peft_model(model, lora_config)
     else:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=True, quantization_config=quantization_config)
-        if args.use_qlora:
-            model = prepare_model_for_kbit_training(model)
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
         model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
@@ -549,5 +534,9 @@ def train(args: TrainingArguments):
 if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
+    with open(args.deepspeed_config) as f:
+        deepspeed_config = json.load(f)
+    args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
     args.use_zero_one_opt = False
+    args.use_qlora = False
     train(args)
