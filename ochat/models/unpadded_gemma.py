@@ -40,15 +40,13 @@ except ImportError:
 
 logger = logging.get_logger(__name__)
 
+@torch.jit.script
+def lm_head_with_loss(embed_weights: torch.Tensor, hidden_states: torch.Tensor, nz_shifted_label_ids: torch.Tensor, nz_shifted_loss_weights: torch.Tensor, num_seq: int):
+    logits = nn.functional.linear(hidden_states, embed_weights)
 
-@torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
-
-
-@torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
+    loss = (nz_shifted_loss_weights * torch.nn.functional.cross_entropy(logits, nz_shifted_label_ids, reduction="none")).sum() / num_seq
+    token_accuracy = (nz_shifted_loss_weights * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)).sum() / num_seq
+    return (loss, token_accuracy), logits
 
 
 @torch.jit.script  # type: ignore
@@ -259,6 +257,7 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
+        self.normalization_factor = config.hidden_size ** 0.5
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.rotary_emb   = UnpaddedGemmaRotaryEmbedding(config.head_dim,
@@ -286,7 +285,7 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
     ) -> torch.Tensor:
-        nz_hidden_states = self.embed_tokens(nz_input_ids)
+        nz_hidden_states = self.embed_tokens(nz_input_ids) * self.normalization_factor  # Normalized
         cos_sin          = self.rotary_emb()
 
         # decoder layers
@@ -324,8 +323,6 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
         super().__init__(config)
         self.model = UnpaddedGemmaModel(config)
 
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
         # Initialize weights and apply final processing
         self.post_init()
 
@@ -336,10 +333,10 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
         self.model.embed_tokens = value
 
     def get_output_embeddings(self):
-        return self.lm_head
+        return self.model.embed_tokens
 
     def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+        self.model.embed_tokens = new_embeddings
 
     def set_decoder(self, decoder):
         self.model = decoder
@@ -366,18 +363,18 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen
         )
-        logits = self.lm_head(hidden_states)
 
         loss = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            if num_seq > 0:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
-            else:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+            loss, logits = lm_head_with_loss(
+                self.model.embed_tokens.weight,
+                hidden_states,
+                nz_shifted_label_ids,
+                nz_shifted_loss_weights,
+                num_seq if num_seq != 0 else 1
+            )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
