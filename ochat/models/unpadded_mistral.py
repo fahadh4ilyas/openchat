@@ -100,8 +100,8 @@ class UnpaddedMistralRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim))
-        t = torch.arange(max_position_embeddings, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
         freqs = torch.outer(t, inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
