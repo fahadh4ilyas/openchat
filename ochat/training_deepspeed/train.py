@@ -48,6 +48,7 @@ class TrainingArguments(BaseModel):
     lr: Optional[float] = Field(None)
     lr_min_ratio: float = Field(0.1)
     lr_warmup_ratio: float = Field(0.05)
+    lr_warmup_step: int = Field(0)
     weight_decay: float = Field(0.1)
     beta1: float = Field(0.9)
     beta2: float = Field(0.95)
@@ -114,7 +115,8 @@ def parse_args():
     parser_base.add_argument("--base_lr",               type=float, default=3e-4)
     parser_base.add_argument("--lr",                    type=float, default=None)
     parser_base.add_argument("--lr_min_ratio",          type=float, default=0.1)
-    parser_base.add_argument("--lr_warmup_ratio",       type=int,   default=0.05)
+    parser_base.add_argument("--lr_warmup_ratio",       type=float,   default=0.05)
+    parser_base.add_argument("--lr_warmup_step",        type=int,   default=0)
 
     parser_base.add_argument("--weight_decay",          type=float, default=0.1)
 
@@ -295,7 +297,7 @@ def create_lr_scheduler(args: TrainingArguments, train_total_steps):
     lr_scheduler = partial(
         cosine_schedule_with_warmup_lr_lambda,
 
-        num_warmup_steps=round(args.lr_warmup_ratio * train_total_steps),
+        num_warmup_steps=args.lr_warmup_step or round(args.lr_warmup_ratio * train_total_steps),
         num_training_steps=train_total_steps,
         min_ratio=args.lr_min_ratio
     )
