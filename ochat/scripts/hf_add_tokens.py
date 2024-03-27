@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, validator
 class Arguments(BaseModel):
 
     model_path: str = Field(...)
-    save_path: str = Field(...)
+    output_dir: str = Field(...)
     added_special_tokens: typing.List[str] = Field([])
     added_tokens: typing.List[str] = Field([])
 
@@ -32,14 +32,12 @@ def parse_args():
     )
     parser.add_argument(
         "--added-special-tokens",
-        default=[],
         type=str,
         nargs="*",
         help="Special token list to add"
     )
     parser.add_argument(
         "--added-tokens",
-        default=[],
         type=str,
         nargs="*",
         help="Token list to add"
@@ -66,8 +64,8 @@ def main(args: Arguments):
     model.resize_token_embeddings(len(tokenizer))
 
     # Save
-    tokenizer.save_pretrained(args.save_path)
-    model.save_pretrained(args.save_path)
+    tokenizer.save_pretrained(args.output_dir)
+    model.save_pretrained(args.output_dir)
 
 
 if __name__ == "__main__":
