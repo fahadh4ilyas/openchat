@@ -32,12 +32,14 @@ def parse_args():
     )
     parser.add_argument(
         "--added-special-tokens",
+        default=[],
         type=str,
         nargs="*",
         help="Special token list to add"
     )
     parser.add_argument(
         "--added-tokens",
+        default=[],
         type=str,
         nargs="*",
         help="Token list to add"
