@@ -17,7 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Unpadded & Fused Mistral model. Compatible with HF. """
+""" PyTorch Unpadded & Fused LLaMA model. Compatible with HF. """
 
 from typing import Optional, Tuple
 
@@ -29,7 +29,7 @@ from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from .configuration_mistral_yarn import MistralConfig
+from .configuration_llama_long import LlamaConfig
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
@@ -105,11 +105,10 @@ def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, si
     return q_embed, k_embed
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Mistral
-class UnpaddedMistralRMSNorm(nn.Module):
+class UnpaddedLlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps):
         """
-        UnpaddedMistralRMSNorm is equivalent to T5LayerNorm
+        UnpaddedLlamaRMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
 
@@ -120,8 +119,29 @@ class UnpaddedMistralRMSNorm(nn.Module):
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Mistral
-class UnpaddedMistralRotaryEmbedding(torch.nn.Module):
+class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
+    """LlamaRotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
+
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
+        super().__init__()
+
+        # RoPE
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
+        t = t / scaling_factor
+        freqs = torch.outer(t, inv_freq)
+
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        dtype = torch.get_default_dtype()
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self):
+        return self.cos_cached, self.sin_cached
+
+
+class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, scale=1, original_max_position_embeddings=2048, extrapolation_factor=1, attn_factor=1, beta_fast=32, beta_slow=1, finetuned=False, device=None):
         super().__init__()
 
@@ -148,12 +168,6 @@ class UnpaddedMistralRotaryEmbedding(torch.nn.Module):
         self.register_buffer("cos_cached", (emb.cos() * self.mscale).to(dtype), persistent=False)
         self.register_buffer("sin_cached", (emb.sin() * self.mscale).to(dtype), persistent=False)
 
-    def forward(self):
-        return (
-            self.cos_cached,
-            self.sin_cached,
-        )
-
     def yarn(self, device):
         pos_freqs = self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=device).float() / self.dim)
         inv_freq_extrapolation = 1.0 / pos_freqs
@@ -166,34 +180,38 @@ class UnpaddedMistralRotaryEmbedding(torch.nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.mscale = float(_yarn_get_mscale(self.scale) * self.attn_factor) # Get n-d magnitude scaling corrected for interpolation
 
+    def forward(self):
+        return self.cos_cached, self.sin_cached
 
-class UnpaddedMistralMLP(nn.Module):
-    def __init__(self, config: MistralConfig):
+
+class UnpaddedLlamaMLP(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        hidden_act: str,
+    ):
         super().__init__()
-
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-        self.act_fn = ACT2FN[config.hidden_act]
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
-class UnpaddedMistralAttention(nn.Module):
+class UnpaddedLlamaAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: MistralConfig):
+    def __init__(self, config: LlamaConfig):
         super().__init__()
 
+        self.config = config
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.sliding_window = config.sliding_window
+        self.num_key_value_heads = config.num_key_value_heads if config.num_key_value_heads is not None else config.num_attention_heads
         self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
@@ -202,10 +220,10 @@ class UnpaddedMistralAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
+        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
+        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
 
     def forward(
         self,
@@ -221,8 +239,8 @@ class UnpaddedMistralAttention(nn.Module):
         # cu_seqlens:       [bs + 1]
 
         query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_heads, self.head_dim)
+        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
@@ -233,24 +251,26 @@ class UnpaddedMistralAttention(nn.Module):
             q=query_states, k=key_states, v=value_states,
             cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
             max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-
-            dropout_p=self.attention_dropout if self.training else 0.0, causal=True,
-            window_size=(self.sliding_window, self.sliding_window) if self.sliding_window is not None else (-1, -1))
+            dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
         return self.o_proj(attn_output)
 
 
-class UnpaddedMistralDecoderLayer(nn.Module):
-    def __init__(self, config: MistralConfig):
+class UnpaddedLlamaDecoderLayer(nn.Module):
+    def __init__(self, config: LlamaConfig):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.self_attn = UnpaddedMistralAttention(config=config)
-        self.mlp = UnpaddedMistralMLP(config=config)
-        self.input_layernorm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.self_attn = UnpaddedLlamaAttention(config=config)
+        self.mlp = UnpaddedLlamaMLP(
+            hidden_size=self.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=config.hidden_act,
+        )
+        self.input_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
     def forward(
         self,
@@ -285,11 +305,11 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         return nz_hidden_states
 
 
-class UnpaddedMistralPreTrainedModel(PreTrainedModel):
-    config_class = MistralConfig
+class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
+    config_class = LlamaConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["UnpaddedMistralDecoderLayer"]
+    _no_split_modules = ["UnpaddedLlamaDecoderLayer"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -303,28 +323,34 @@ class UnpaddedMistralPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
+class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedMistralDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedLlamaDecoderLayer`]
 
     Args:
-        config: MistralConfig
+        config: LlamaConfig
     """
 
-    def __init__(self, config: MistralConfig):
+    def __init__(self, config: LlamaConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedMistralRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                         max_position_embeddings=config.max_position_embeddings,
-                                                         scale=config.rope_scaling["factor"],
-                                                         original_max_position_embeddings=config.rope_scaling["original_max_position_embeddings"],
-                                                         base=config.rope_theta)
+        if config.rope_scaling["type"] == "linear":
+            self.rotary_emb = UnpaddedLlamaLinearScalingRotaryEmbedding(config.hidden_size // config.num_attention_heads,
+                                                                      max_position_embeddings=config.max_position_embeddings,
+                                                                      base=config.rope_theta,
+                                                                      scaling_factor=config.rope_scaling["factor"])
+        elif config.rope_scaling["type"] == "yarn":
+            self.rotary_emb   = UnpaddedLlamaYarnRotaryEmbedding(config.hidden_size // config.num_attention_heads,
+                                                            max_position_embeddings=config.max_position_embeddings,
+                                                            scale=config.rope_scaling["factor"],
+                                                            original_max_position_embeddings=config.rope_scaling["original_max_position_embeddings"],
+                                                            base=config.rope_theta)
 
-        self.layers = nn.ModuleList([UnpaddedMistralDecoderLayer(config) for _ in range(config.num_hidden_layers)])
-        self.norm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.layers = nn.ModuleList([UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.norm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -353,7 +379,7 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                 nz_hidden_states = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-                    
+
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
@@ -374,10 +400,13 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         return nz_hidden_states
 
 
-class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
+class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
+    # Ignore rotary emb inv_freq on load, as they will be calculated on creation
+    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"]
+
     def __init__(self, config):
         super().__init__(config)
-        self.model = UnpaddedMistralModel(config)
+        self.model = UnpaddedLlamaModel(config)
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -440,7 +469,7 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         )
 
 
-class PaddedMistralForCausalLM(MistralForCausalLM):
+class PaddedLlamaForCausalLM(LlamaForCausalLM):
     """Compat layer for padded inputs"""
 
     def forward(

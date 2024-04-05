@@ -47,12 +47,12 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4")
     ),
 
-    "llamaYarn": ModelConfig(
+    "llamaLong": ModelConfig(
         # Model
-        model_max_context=16*4096,
+        model_max_context=8*4096,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),
-        model_create_for_training=partial(ochat.models.LlamaYarnForCausalLM.from_pretrained,
+        model_create_for_training=partial(ochat.models.LlamaLongForCausalLM.from_pretrained,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -77,12 +77,12 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4 Correct")
     ),
 
-    "mistralYarn": ModelConfig(
+    "mistralLong": ModelConfig(
         # Model
-        model_max_context=16*4096,
+        model_max_context=4*8192,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
-        model_create_for_training=partial(ochat.models.MistralYarnForCausalLM.from_pretrained,
+        model_create_for_training=partial(ochat.models.MistralLongForCausalLM.from_pretrained,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -183,12 +183,12 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4")
     ),
 
-    "llamaYarn_chatml": ModelConfig(
+    "llamaLong_chatml": ModelConfig(
         # Model
-        model_max_context=16*4096,
+        model_max_context=8*4096,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),
-        model_create_for_training=partial(ochat.models.LlamaYarnForCausalLM.from_pretrained,
+        model_create_for_training=partial(ochat.models.LlamaLongForCausalLM.from_pretrained,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
@@ -215,12 +215,12 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4 correct")
     ),
 
-    "mistralYarn_chatml": ModelConfig(
+    "mistralLong_chatml": ModelConfig(
         # Model
-        model_max_context=16*4096,
+        model_max_context=4*8192,
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
-        model_create_for_training=partial(ochat.models.MistralYarnForCausalLM.from_pretrained,
+        model_create_for_training=partial(ochat.models.MistralLongForCausalLM.from_pretrained,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
