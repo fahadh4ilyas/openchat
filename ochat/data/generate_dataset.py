@@ -4,7 +4,7 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
-from typing import List
+from typing import List, Optional
 import argparse
 import os
 import random
@@ -25,6 +25,7 @@ class DataArguments(BaseModel):
     out_prefix: str = Field(...)
     per_sequence_loss: bool = Field(False)
     force_eos_token: bool = Field(False)
+    max_seq_length: Optional[int] = Field(None)
     seed: int = Field(42)
     eval_ratio: float = Field(0.0)
 
@@ -75,7 +76,7 @@ def add_single_conv(output, tokens, weights):
 
 
 @ray.remote
-def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool):
+def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool, max_seq_length: Optional[int]):
     from ochat.config import MODEL_CONFIG_MAP, Conversation
 
     # Tokenization
@@ -96,7 +97,7 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
 
     # Generate data
     print ("Generating ...")
-    max_context = model_config.model_max_context
+    max_context = max_seq_length or model_config.model_max_context
 
     outputs = {k: [] for k in schema.names}
     for tokens, weights in zip(tokens_list, weights_list):
@@ -114,7 +115,7 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
     return pyarrow.Table.from_pydict(outputs, schema=schema)
 
 
-def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool):
+def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool, max_seq_length: Optional[int]):
     # schema
     metadata = {
         "model_type": model_type
@@ -142,14 +143,15 @@ def generate_split(model_type: str, model_path: str, conversations: list, split_
         batch=batch,
         schema=schema,
         per_sequence_loss=per_sequence_loss,
-        force_eos_token=force_eos_token
+        force_eos_token=force_eos_token,
+        max_seq_length=max_seq_length
     ) for batch in _split(conversations, int(ray.available_resources()["CPU"]))]
 
     # write
     parquet.write_table(pyarrow.concat_tables([ray.get(handle) for handle in handles]), f"{out_prefix}.{split_name}.parquet")
 
 
-def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, seed, eval_ratio):
+def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, max_seq_length, seed, eval_ratio):
     # Load conversations
     conversations = []
     for filename in in_files:
@@ -164,9 +166,9 @@ def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_
     train_conversations = conversations[eval_num:]
     eval_conversations  = conversations[:eval_num]
 
-    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token)
+    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token, max_seq_length)
     if eval_num > 0:
-        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token)
+        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token, max_seq_length)
 
 
 if __name__ == "__main__":
@@ -179,6 +181,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--per-sequence-loss", action="store_true")
     parser.add_argument("--force-eos-token", action="store_true")
+    parser.add_argument("--max-seq-length", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-ratio", type=float, default=0.0)
     args, _ = parser.parse_known_args()
