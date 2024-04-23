@@ -167,8 +167,8 @@ class UnpaddedLlamaAttention(nn.Module):
         # cu_seqlens:       [bs + 1]
 
         query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
+        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
+        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
