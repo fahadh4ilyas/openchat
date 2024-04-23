@@ -188,9 +188,12 @@ class ChatMLConversationTemplate(BaseModel):
         result_tokens = []
         result_weights = []
         for conv in chatml_conversations:
+            tokens = []
+            weights = []
+
             if self.tokenizer.add_bos_token:
-                tokens = self.bos_tokens_.copy()
-                weights = [0.0] * len(self.bos_tokens_)
+                tokens.extend(self.bos_tokens_)
+                weights.extend([0.0] * len(self.bos_tokens_))
 
             for msg in conv:
                 token_msg = text_mapping[msg.message]
