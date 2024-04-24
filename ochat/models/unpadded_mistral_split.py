@@ -127,7 +127,7 @@ class UnpaddedMistralMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-        splitted_x = x.split(8192, dim=0)
+        splitted_x = x.split(4096, dim=0)
 
         return torch.cat([self.down_proj(self.act_fn(self.gate_proj(x_in)) * self.up_proj(x_in)) for x_in in splitted_x], dim=0)
 
@@ -188,7 +188,8 @@ class UnpaddedMistralAttention(nn.Module):
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
-        return self.o_proj(attn_output)
+        splitted_attn_output = attn_output.split(4096, dim=0)
+        return torch.cat([self.o_proj(attn_output_in) for attn_output_in in splitted_attn_output], dim=0)
 
 
 class UnpaddedMistralDecoderLayer(nn.Module):
