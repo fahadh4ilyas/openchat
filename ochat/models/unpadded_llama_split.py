@@ -143,7 +143,7 @@ class UnpaddedLlamaMLP(nn.Module):
 
             intermediate_states = (self.act_fn(gate_proj) * up_proj).split(slice, dim=-1)
             
-            return sum([nn.functional.linear(intermediate_states[i], down_proj_slices[i]) for i in range(self.pretraining_tp)])
+            return torch.stack([nn.functional.linear(intermediate_states[i], down_proj_slices[i]) for i in range(self.pretraining_tp)]).sum(dim=0)
  
         splitted_x = x.split(4096, dim=0)
 
@@ -228,7 +228,7 @@ class UnpaddedLlamaAttention(nn.Module):
             attn_output_slice = attn_output.split(slice, dim=-1)
             o_proj_slices = self.o_proj.weight.split(slice, dim=1)
 
-            return sum([nn.functional.linear(attn_output_slice[i], o_proj_slices[i]) for i in range(self.config.pretraining_tp)])
+            return torch.stack([nn.functional.linear(attn_output_slice[i], o_proj_slices[i]) for i in range(self.config.pretraining_tp)]).sum(dim=0)
 
         splitted_attn_output = attn_output.split(4096, dim=0)
         return torch.cat([self.o_proj(attn_output_in) for attn_output_in in splitted_attn_output], dim=0)
