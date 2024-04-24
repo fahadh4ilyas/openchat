@@ -169,9 +169,10 @@ class UnpaddedMistralAttention(nn.Module):
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        splitted_nz_hidden_states = nz_hidden_states.split(4096, dim=0)
+        query_states = torch.cat([self.q_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_heads, self.head_dim)
+        key_states = torch.cat([self.k_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_key_value_heads, self.head_dim)
+        value_states = torch.cat([self.v_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_key_value_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
