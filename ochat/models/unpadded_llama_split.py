@@ -196,13 +196,13 @@ class UnpaddedLlamaAttention(nn.Module):
 
             query_states = torch.cat(
                 [nn.functional.linear(nz_hidden_states, q_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
-            )
+            ).view(-1, self.num_heads, self.head_dim)
             key_states = torch.cat(
                 [nn.functional.linear(nz_hidden_states, k_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
-            )
+            ).view(-1, self.num_key_value_heads, self.head_dim)
             value_states = torch.cat(
                 [nn.functional.linear(nz_hidden_states, v_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
-            )
+            ).view(-1, self.num_key_value_heads, self.head_dim)
         else:
             splitted_nz_hidden_states = nz_hidden_states.split(4096, dim=0)
             query_states = torch.cat([self.q_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_heads, self.head_dim)
