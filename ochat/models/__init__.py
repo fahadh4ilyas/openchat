@@ -1,6 +1,8 @@
 from ochat.models.unpadded_llama import LlamaForCausalLM
+from ochat.models.unpadded_llama_split import LlamaForCausalLM as LlamaSplitForCausalLM
 from ochat.models.unpadded_llama_long import LlamaForCausalLM as LlamaLongForCausalLM
 from ochat.models.unpadded_mistral import MistralForCausalLM
+from ochat.models.unpadded_mistral_split import MistralForCausalLM as MistralSplitForCausalLM
 from ochat.models.unpadded_mistral_long import MistralForCausalLM as MistralLongForCausalLM
 from ochat.models.unpadded_mixtral import MixtralForCausalLM
 from ochat.models.unpadded_gemma import GemmaForCausalLM
