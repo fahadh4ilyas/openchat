@@ -191,9 +191,8 @@ class ChatMLConversationTemplate(BaseModel):
             tokens = []
             weights = []
 
-            if self.tokenizer.add_bos_token:
-                tokens.extend(self.bos_tokens_)
-                weights.extend([0.0] * len(self.bos_tokens_))
+            tokens.extend(self.bos_tokens_)
+            weights.extend([0.0] * len(self.bos_tokens_))
 
             for msg in conv[:-1]:
                 token_msg = text_mapping[msg.message]
