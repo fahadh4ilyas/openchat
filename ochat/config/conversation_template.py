@@ -161,7 +161,7 @@ class ChatMLConversationTemplate(BaseModel):
         super().__init__(**data, sep=sep, bos_tokens_=bos_tokens_, eos_tokens_=eos_tokens_)
     
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
-        return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
+        return self.tokenizer(strings, return_attention_mask=False, add_special_tokens=False).input_ids
 
     def _convert_to_chatml(self, conversation: Conversation, default_condition: str = "") -> List[ChatMLMessage]:
 
