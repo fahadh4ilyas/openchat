@@ -144,6 +144,7 @@ class ChatMLConversationTemplate(BaseModel):
     role_prefix: Callable
 
     prompt_format: str
+    conv_sep: List[int]
     sep: List[int]
 
     inference_condition: Optional[str] = None
@@ -154,11 +155,12 @@ class ChatMLConversationTemplate(BaseModel):
     def __init__(self, **data):
         tokenizer = data["tokenizer"]
 
+        conv_sep = tokenizer(data.pop('conv_sep', '\n'), add_special_tokens=False).input_ids
         sep = tokenizer(data.pop('sep', '\n'), add_special_tokens=False).input_ids
         bos_tokens_ = tokenizer("").input_ids
         eos_tokens_ = [tokenizer.eos_token_id]
 
-        super().__init__(**data, sep=sep, bos_tokens_=bos_tokens_, eos_tokens_=eos_tokens_)
+        super().__init__(**data, conv_sep=conv_sep, sep=sep, bos_tokens_=bos_tokens_, eos_tokens_=eos_tokens_)
     
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
         return self.tokenizer(strings, return_attention_mask=False, add_special_tokens=False).input_ids
@@ -210,8 +212,8 @@ class ChatMLConversationTemplate(BaseModel):
                     if seq_level_weight:
                         w /= rest_index
                     weights.extend([w] * rest_index)
-                tokens.extend(self.sep)
-                weights.extend([0.0] * len(self.sep))
+                tokens.extend(self.conv_sep)
+                weights.extend([0.0] * len(self.conv_sep))
             
             if len(conv) > 0:
                 msg = conv[-1]
