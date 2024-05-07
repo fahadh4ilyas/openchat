@@ -154,7 +154,7 @@ class ChatMLConversationTemplate(BaseModel):
     def __init__(self, **data):
         tokenizer = data["tokenizer"]
 
-        sep = tokenizer('\n', add_special_tokens=False).input_ids
+        sep = tokenizer(data.pop('sep', '\n'), add_special_tokens=False).input_ids
         bos_tokens_ = tokenizer("").input_ids
         eos_tokens_ = [tokenizer.eos_token_id]
 
@@ -177,7 +177,7 @@ class ChatMLConversationTemplate(BaseModel):
         
         return prompts
 
-    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_eos_token: bool = False):
+    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_eos_token: bool = False, eos_final: bool = False):
 
         default_condition = self.inference_condition if inference else ""
 
@@ -195,7 +195,7 @@ class ChatMLConversationTemplate(BaseModel):
                 tokens.extend(self.bos_tokens_)
                 weights.extend([0.0] * len(self.bos_tokens_))
 
-            for msg in conv:
+            for msg in conv[:-1]:
                 token_msg = text_mapping[msg.message]
                 tokens.extend(token_msg)
                 if msg.weight == 0:
@@ -214,8 +214,23 @@ class ChatMLConversationTemplate(BaseModel):
                 tokens.extend(self.sep)
                 weights.extend([0.0] * len(self.sep))
             
-            tokens = tokens[:-len(self.sep)]
-            weights = weights[:-len(self.sep)]
+            if len(conv) > 0:
+                msg = conv[-1]
+                token_msg = text_mapping[msg.message]
+                tokens.extend(token_msg)
+                if msg.weight == 0:
+                    weights.extend([0.0] * len(token_msg))
+                else:
+                    if (force_eos_token or eos_final) and token_msg[-1] != self.eos_tokens_[0]:
+                        tokens.extend(self.eos_tokens_)
+                        token_msg.extend(self.eos_tokens_)
+                    first_index = token_msg.index(self.sep[-1])
+                    weights.extend([0.0] * first_index)
+                    rest_index = len(token_msg[first_index:])
+                    w = msg.weight
+                    if seq_level_weight:
+                        w /= rest_index
+                    weights.extend([w] * rest_index)
 
             result_tokens.append(tokens)
             result_weights.append(weights)

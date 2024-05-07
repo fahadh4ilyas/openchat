@@ -25,6 +25,7 @@ class DataArguments(BaseModel):
     out_prefix: str = Field(...)
     per_sequence_loss: bool = Field(False)
     force_eos_token: bool = Field(False)
+    eos_final: bool = Field(False)
     max_seq_length: Optional[int] = Field(None)
     seed: int = Field(42)
     eval_ratio: float = Field(0.0)
@@ -76,7 +77,7 @@ def add_single_conv(output, tokens, weights):
 
 
 @ray.remote
-def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool, max_seq_length: Optional[int]):
+def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int]):
     from ochat.config import MODEL_CONFIG_MAP, Conversation
 
     # Tokenization
@@ -93,7 +94,7 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
     tokens_list = []
     weights_list = []
     if len(batch) > 0:
-        tokens_list, weights_list = conv_template.tokenize_conversations(batch, inference=False, seq_level_weight=per_sequence_loss, force_eos_token=force_eos_token)
+        tokens_list, weights_list = conv_template.tokenize_conversations(batch, inference=False, seq_level_weight=per_sequence_loss, force_eos_token=force_eos_token, eos_final=eos_final)
 
     # Generate data
     print ("Generating ...")
@@ -115,7 +116,7 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
     return pyarrow.Table.from_pydict(outputs, schema=schema)
 
 
-def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool, max_seq_length: Optional[int]):
+def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int]):
     # schema
     metadata = {
         "model_type": model_type
@@ -144,6 +145,7 @@ def generate_split(model_type: str, model_path: str, conversations: list, split_
         schema=schema,
         per_sequence_loss=per_sequence_loss,
         force_eos_token=force_eos_token,
+        eos_final=eos_final,
         max_seq_length=max_seq_length
     ) for batch in _split(conversations, int(ray.available_resources()["CPU"]))]
 
@@ -151,7 +153,7 @@ def generate_split(model_type: str, model_path: str, conversations: list, split_
     parquet.write_table(pyarrow.concat_tables([ray.get(handle) for handle in handles]), f"{out_prefix}.{split_name}.parquet")
 
 
-def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, max_seq_length, seed, eval_ratio):
+def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length, seed, eval_ratio):
     # Load conversations
     conversations = []
     for filename in in_files:
@@ -166,9 +168,9 @@ def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_
     train_conversations = conversations[eval_num:]
     eval_conversations  = conversations[:eval_num]
 
-    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token, max_seq_length)
+    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length)
     if eval_num > 0:
-        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token, max_seq_length)
+        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length)
 
 
 if __name__ == "__main__":
@@ -181,6 +183,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--per-sequence-loss", action="store_true")
     parser.add_argument("--force-eos-token", action="store_true")
+    parser.add_argument("--eos-final", action="store_true")
     parser.add_argument("--max-seq-length", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-ratio", type=float, default=0.0)
