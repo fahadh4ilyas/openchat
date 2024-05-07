@@ -91,7 +91,7 @@ MODEL_CONFIG_MAP = {
                                       role_prefix=_chatml_role_prefix,
                                       prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
                                       sep='\n\n',
-                                      conv_sep='\n',
+                                      conv_sep='',
                                       inference_condition="GPT4")
     ),
 
