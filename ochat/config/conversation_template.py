@@ -175,7 +175,7 @@ class ChatMLConversationTemplate(BaseModel):
             role = message.role
             if message.name is not None:
                 role = message.name
-            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition, self.model), text=message.content), weight=message.weight))
+            prompts.append(ChatMLMessage(message=self.prompt_format.format(role=self.role_prefix(role , conversation.condition or default_condition, self.model), text=message.content.strip()), weight=message.weight))
         
         return prompts
 
