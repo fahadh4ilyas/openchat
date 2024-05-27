@@ -49,13 +49,17 @@ def truncate_trailing_zero_weighted(tokens, weights):
     return tokens[:non_zero_index + 1], weights[:non_zero_index + 1]
 
 
-def add_single_conv(output, tokens, weights):
+def add_single_conv(output, tokens, weights, data_length_multiple_of):
     # truncate trailing zero weighted tokens
     tokens, weights = truncate_trailing_zero_weighted(tokens, weights)
     if not tokens:
         return
 
     # labels
+    length = len(tokens)
+    addition = -(-length//data_length_multiple_of)*data_length_multiple_of - length
+    tokens.extend([PAD_TOKEN_ID]*addition)
+    weights.extend([0.0]*addition)
     length = len(tokens)
     labels = [(t if w != 0 else PAD_TOKEN_ID) for t, w in zip(tokens, weights)]
 
@@ -77,7 +81,7 @@ def add_single_conv(output, tokens, weights):
 
 
 @ray.remote
-def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int]):
+def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int], data_length_multiple_of: int):
     from ochat.config import MODEL_CONFIG_MAP, Conversation
 
     # Tokenization
@@ -109,14 +113,14 @@ def convert_conversation_batch(model_type: str, model_path: str, batch: list, sc
         weights = weights[:max_context]
 
         # Add to results
-        add_single_conv(outputs, tokens, weights)
+        add_single_conv(outputs, tokens, weights, data_length_multiple_of)
 
     print ("Chunk finish")
 
     return pyarrow.Table.from_pydict(outputs, schema=schema)
 
 
-def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int]):
+def generate_split(model_type: str, model_path: str, conversations: list, split_name: str, out_prefix: str, per_sequence_loss: bool, force_eos_token: bool, eos_final: bool, max_seq_length: Optional[int], data_length_multiple_of: int):
     # schema
     metadata = {
         "model_type": model_type
@@ -146,14 +150,15 @@ def generate_split(model_type: str, model_path: str, conversations: list, split_
         per_sequence_loss=per_sequence_loss,
         force_eos_token=force_eos_token,
         eos_final=eos_final,
-        max_seq_length=max_seq_length
+        max_seq_length=max_seq_length,
+        data_length_multiple_of=data_length_multiple_of
     ) for batch in _split(conversations, int(ray.available_resources()["CPU"]))]
 
     # write
     parquet.write_table(pyarrow.concat_tables([ray.get(handle) for handle in handles]), f"{out_prefix}.{split_name}.parquet")
 
 
-def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length, seed, eval_ratio):
+def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length, seed, eval_ratio, data_length_multiple_of):
     # Load conversations
     conversations = []
     for filename in in_files:
@@ -168,9 +173,9 @@ def generate_dataset(model_type, model_path, in_files, out_prefix, per_sequence_
     train_conversations = conversations[eval_num:]
     eval_conversations  = conversations[:eval_num]
 
-    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length)
+    generate_split(model_type, model_path, train_conversations, "train", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length, data_length_multiple_of)
     if eval_num > 0:
-        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length)
+        generate_split(model_type, model_path, eval_conversations, "eval", out_prefix, per_sequence_loss, force_eos_token, eos_final, max_seq_length, data_length_multiple_of)
 
 
 if __name__ == "__main__":
@@ -187,6 +192,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-seq-length", type=int, default=None)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--eval-ratio", type=float, default=0.0)
+    parser.add_argument("--data-length-multiple-of", type=int, default=1)
     args, _ = parser.parse_known_args()
 
     args = DataArguments(**vars(args))
