@@ -171,8 +171,8 @@ class UnpaddedLlamaAttention(nn.Module):
         # flash attn
         attn_output = zigzag_ring_flash_attn_varlen_func(
             q=query_states, k=key_states, v=value_states,
-            cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
             dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
