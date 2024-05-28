@@ -54,13 +54,15 @@ def ffd_with_result(a: np.ndarray, c: int, start_index: int):
 
 
 @numba.njit
-def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, rank: int, c: int, n: int):
+def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int):
     # Dynamic batch allocator, similar to Multifit
     # https://en.wikipedia.org/wiki/Multifit_algorithm
     # ~99.5% efficiency on OpenChat training set (12 * 2048 ctx len)
 
     s = 0
     start_index = 0
+    rank = 0
+    n = 1
     result = []
 
     while True:
@@ -118,7 +120,6 @@ class MultipackDistributedDataloader:
         # Dataset
         self.dataset = dataset
         self.lengths = lengths
-        self.numseqs = numseqs
         assert isinstance(self.lengths, np.ndarray)
 
         self.batch_max_length = batch_max_length
@@ -158,9 +159,7 @@ class MultipackDistributedDataloader:
 
         batches, total_used, total_slots = allocate(lengths=lengths,
                                                     lengths_cumsum=lengths_cumsum,
-                                                    rank=0,
-                                                    c=self.batch_max_length,
-                                                    n=1)
+                                                    c=self.batch_max_length)
         
         batched_indices = [indices[batch]         for batch in batches]
 

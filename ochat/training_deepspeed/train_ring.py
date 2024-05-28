@@ -101,8 +101,8 @@ def _find_multiple(a, b):
 
 def parse_args():
     parser_base = argparse.ArgumentParser(add_help=False)
-    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
-    parser_lora = argparse.ArgumentParser(add_help=False)
+    # parser_lora_confirm = argparse.ArgumentParser(add_help=False)
+    # parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
     parser_base.add_argument("--local_rank",            type=int, required=True)
 
@@ -140,26 +140,26 @@ def parse_args():
     parser_base.add_argument("--run_name",              type=str, required=True)
 
     # LORA
-    parser_lora_confirm.add_argument("--use_lora",      action='store_true')
-    parser_lora.add_argument("--lora_alpha",            type=int, default=32)
-    parser_lora.add_argument("--lora_r",                type=int, default=32)
-    parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
-    parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    parser_lora.add_argument("--lora_bias",             type=str, default="none")
-    parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
+    # parser_lora_confirm.add_argument("--use_lora",      action='store_true')
+    # parser_lora.add_argument("--lora_alpha",            type=int, default=32)
+    # parser_lora.add_argument("--lora_r",                type=int, default=32)
+    # parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
+    # parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    # parser_lora.add_argument("--lora_bias",             type=str, default="none")
+    # parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
 
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
 
     # Group parser
-    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
+    # parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
 
     # Parse known args
-    parser_group.parse_args()
+    # parser_group.parse_args()
     args_base, _ = parser_base.parse_known_args()
-    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
-    args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_lora_confirm, args_lora
+    # args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
+    # args_lora, _ = parser_lora.parse_known_args()
+    return args_base # , args_lora_confirm, args_lora
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -388,7 +388,7 @@ def train(args: TrainingArguments):
         model_engine.train()
 
         train_loader.set_epoch(epoch)
-        for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
+        for batch_tensor, batch_info in train_loader:
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
@@ -401,15 +401,10 @@ def train(args: TrainingArguments):
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
             # Update
-            output = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq)
+            output = model_engine(**batch_tensor, **batch_info)
             acc = output.loss
             logits = output.logits
             loss = loss_func(logits, batch_tensor['nz_shifted_label_ids'])
-            
-            if isinstance(loss, tuple):
-                loss, aux_loss = loss
-            else:
-                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
 
             model_engine.backward(loss)
 
@@ -421,11 +416,14 @@ def train(args: TrainingArguments):
 
             model_engine.step()
 
+            loss_reduce = dist.all_reduce(loss.detach(), dist.ReduceOp.AVG)
+            acc_reduce = dist.all_reduce(acc, dist.ReduceOp.AVG)
+
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
-                    "train/loss": (loss.item() - aux_loss.item()) * (all_numseq / cur_numseq) + aux_loss.item(),
-                    "train/acc":  acc.item()  * (all_numseq / cur_numseq),
+                    "train/loss": loss_reduce.item(),
+                    "train/acc":  acc_reduce.item(),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
@@ -465,15 +463,15 @@ def train(args: TrainingArguments):
 
                 eval_loader.set_epoch(epoch)
                 with torch.inference_mode():
-                    for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
+                    for batch_tensor, batch_info in eval_loader:
                         # To device
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
-                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
-
-                        if isinstance(loss, tuple):
-                            eval_loss, _ = eval_loss
+                        output = model_engine(**batch_tensor, **batch_info)
+                        eval_acc = output.loss
+                        eval_logits = output.logits
+                        eval_loss = loss_func(eval_logits, batch_tensor['nz_shifted_label_ids'])
                         
                         # Accumulate eval loss
                         eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
@@ -515,7 +513,8 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args, args_lora_confirm, args_lora = parse_args()
+    # args, args_lora_confirm, args_lora = parse_args()
+    args = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
