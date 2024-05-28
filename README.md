@@ -118,6 +118,12 @@ Then, install flash attention:
 pip install flash-attn --no-build-isolation
 ```
 
+Additionally, install ring flash attention:
+
+```bash
+pip install ring_flash_attn@git+https://github.com/zhuzilin/ring-flash-attention
+```
+
 ### Preparing Your Data
 
 To utilize the OpenChat trainer, prepare your SFT data into a JSON Lines format where each line corresponds to a `Conversation` object:
@@ -127,6 +133,7 @@ class Message(BaseModel):
     role: str     # Must be "user" or "assistant"
     content: str  # Message content
     weight: Optional[float] = None  # Loss weight for this message. Typically 0 for user and 1 for assistant to supervise assistant's responses only
+    name: Optional[str] = None # Additional name for the role
 
 
 class Conversation(BaseModel):
