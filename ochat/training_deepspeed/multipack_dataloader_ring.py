@@ -107,7 +107,6 @@ class MultipackDistributedDataloader:
         self,
         dataset: Any,
         lengths: np.ndarray,
-        numseqs: np.ndarray,
 
         batch_max_length: int,
         collate_fn: Callable,

@@ -216,7 +216,6 @@ def create_distributed_dataloader(args: TrainingArguments, data):
     return MultipackDistributedDataloader(
         dataset=data,
         lengths=data["total_length"],
-        numseqs=data["num_seqs"],
 
         batch_max_length=args.batch_max_len,
         collate_fn=batch_to_tensor,
