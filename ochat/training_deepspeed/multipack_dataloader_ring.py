@@ -190,7 +190,7 @@ class MultipackDistributedDataloader:
             yield self.collate_fn(dataset)
 
     def num_batches(self):
-        batches, _, _ = self.generate_batches()
+        batches = self.generate_batches()
         return len(batches)
 
     def efficiency(self):
