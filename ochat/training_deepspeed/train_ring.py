@@ -415,7 +415,7 @@ def train(args: TrainingArguments):
 
             model_engine.step()
 
-            loss_reduce = dist.all_reduce(loss.detach(), dist.ReduceOp.AVG)
+            loss_reduce = dist.all_reduce(loss, dist.ReduceOp.AVG)
             acc_reduce = dist.all_reduce(acc, dist.ReduceOp.AVG)
 
             # Logging
