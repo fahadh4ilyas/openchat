@@ -178,7 +178,7 @@ def batch_to_tensor(batch):
     batch = {k: np.concatenate(batch[k], axis=0) for k in BATCH_KEYS.keys()}
 
     # Pad an unused item to reach multiple of 64, for faster GEMM
-    total_seqlen = batch["nz_input_ids"].size
+    # total_seqlen = batch["nz_input_ids"].size
     # pad_len      = _find_multiple(total_seqlen, 64) - total_seqlen
 
     # if pad_len > 0:
