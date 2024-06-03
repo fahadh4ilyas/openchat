@@ -186,8 +186,9 @@ class MultipackDistributedDataloader:
 
         for indices in all_indices:
             dataset = self.dataset[indices]
+            total_seqs = dataset['num_seqs'].sum()
             dataset = self.prepare_dataset(dataset)
-            yield self.collate_fn(dataset)
+            yield self.collate_fn(dataset), total_seqs
 
     def num_batches(self):
         batches = self.generate_batches()

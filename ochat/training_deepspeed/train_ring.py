@@ -387,7 +387,7 @@ def train(args: TrainingArguments):
         model_engine.train()
 
         train_loader.set_epoch(epoch)
-        for batch_tensor, batch_info in train_loader:
+        for (batch_tensor, batch_info), total_seqs in train_loader:
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
@@ -416,13 +416,13 @@ def train(args: TrainingArguments):
             model_engine.step()
 
             dist.reduce(loss, 0, dist.ReduceOp.AVG)
-            dist.reduce(acc, 0, dist.ReduceOp.AVG)
+            dist.reduce(acc, 0, dist.ReduceOp.SUM)
 
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
                     "train/loss": loss.item(),
-                    "train/acc":  acc.item(),
+                    "train/acc":  acc.item() / total_seqs,
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
