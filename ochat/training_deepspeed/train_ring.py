@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 from functools import partial
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, Field, validator
 
@@ -60,8 +60,9 @@ class TrainingArguments(BaseModel):
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
-    deepspeed_config: str = Field(...)
+    deepspeed_config: Union[str, dict] = Field(...)
     deepspeed_mpi: bool = Field(False)
+    ds_offload: bool = Field(False)
     ds_zero_op: int = Field(0)
     device: Optional[str] = Field(None)
 
@@ -70,14 +71,6 @@ class TrainingArguments(BaseModel):
 
         if v%2048 != 0:
             raise ValueError('`batch_max_len` must be multiple of 2048')
-        
-        return v
-    
-    @validator('use_zero_one_opt')
-    def val_opt(cls, v: bool) -> bool:
-
-        if v:
-            raise ValueError('`use_zero_one_opt` must be False for offloading')
         
         return v
 
@@ -244,15 +237,40 @@ def create_model(args: TrainingArguments):
 
     # Create model + optimizer + lr scheduler
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
+    if not args.ds_offload:
+        # Model to assigned cuda device
+        model = model.to(args.local_rank)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
     # Optimizer
-    optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(model.parameters(),
-                                                    lr=args.lr,
-                                                    weight_decay=args.weight_decay,
-                                                    betas=(args.beta1, args.beta2),
-                                                    eps=args.eps)
+    if args.ds_offload:
+        optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(model.parameters(),
+                                                        lr=args.lr,
+                                                        weight_decay=args.weight_decay,
+                                                        betas=(args.beta1, args.beta2),
+                                                        eps=args.eps)
+    elif args.use_zero_one_opt:
+        with open(args.deepspeed_config) as f:
+            ds_config = json.load(f)
+        ds_config['optimizer'] = {
+            "type": "ZeroOneAdam",
+            "params": {
+                "lr": args.lr,
+                "weight_decay": args.weight_decay,
+                "betas": [args.beta1, args.beta2],
+                "eps": args.eps
+            }
+        }
+        ds_config.pop("zero_optimization", None)
+        args.deepspeed_config = ds_config
+        optimizer = None
+    else:
+        optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
+                                            lr=args.lr,
+                                            weight_decay=args.weight_decay,
+                                            betas=(args.beta1, args.beta2),
+                                            eps=args.eps)
                   
     # DeepSpeed model
     model_engine, optimizer, _, _ = deepspeed.initialize(args=args,
@@ -517,6 +535,7 @@ if __name__ == "__main__":
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
-    args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
-    args.use_zero_one_opt = False
+    if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
+        args.ds_offload = True
+        args.use_zero_one_opt = False
     train(args)
