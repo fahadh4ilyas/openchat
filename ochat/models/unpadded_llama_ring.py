@@ -168,6 +168,8 @@ class UnpaddedLlamaAttention(nn.Module):
         cos, sin = cos_sin
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids)
 
+        print(cu_seqlens)
+
         # flash attn
         attn_output = zigzag_ring_flash_attn_varlen_func(
             q=query_states, k=key_states, v=value_states,
