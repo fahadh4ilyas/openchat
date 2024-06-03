@@ -415,14 +415,14 @@ def train(args: TrainingArguments):
 
             model_engine.step()
 
-            loss_reduce = dist.all_reduce(loss, dist.ReduceOp.AVG)
-            acc_reduce = dist.all_reduce(acc, dist.ReduceOp.AVG)
+            dist.reduce(loss, 0, dist.ReduceOp.AVG)
+            dist.reduce(acc, 0, dist.ReduceOp.AVG)
 
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
-                    "train/loss": loss_reduce.item(),
-                    "train/acc":  acc_reduce.item(),
+                    "train/loss": loss.item(),
+                    "train/acc":  acc.item(),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
