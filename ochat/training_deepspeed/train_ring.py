@@ -94,8 +94,8 @@ def _find_multiple(a, b):
 
 def parse_args():
     parser_base = argparse.ArgumentParser(add_help=False)
-    # parser_lora_confirm = argparse.ArgumentParser(add_help=False)
-    # parser_lora = argparse.ArgumentParser(add_help=False)
+    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
+    parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
     parser_base.add_argument("--local_rank",            type=int, required=True)
 
@@ -133,26 +133,32 @@ def parse_args():
     parser_base.add_argument("--run_name",              type=str, required=True)
 
     # LORA
-    # parser_lora_confirm.add_argument("--use_lora",      action='store_true')
-    # parser_lora.add_argument("--lora_alpha",            type=int, default=32)
-    # parser_lora.add_argument("--lora_r",                type=int, default=32)
-    # parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
-    # parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    # parser_lora.add_argument("--lora_bias",             type=str, default="none")
-    # parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
+    parser_lora_confirm.add_argument("--use_lora",      action='store_true')
+    parser_lora.add_argument("--lora_alpha",            type=int, default=32)
+    parser_lora.add_argument("--lora_r",                type=int, default=32)
+    parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
+    parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser_lora.add_argument("--lora_bias",             type=str, default="none")
+    parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
+
+    # QLORA
+    parser_lora.add_argument("--use_qlora",             action='store_true')
+    parser_lora.add_argument("--quant_bits",            type=int, default=4)
+    parser_lora.add_argument("--quant_type_4bit",       type=str, default='nf4')
+    parser_lora.add_argument("--use_double_quant_4bit", action='store_true')
 
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
 
     # Group parser
-    # parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
+    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
 
     # Parse known args
-    # parser_group.parse_args()
+    parser_group.parse_args()
     args_base, _ = parser_base.parse_known_args()
-    # args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
-    # args_lora, _ = parser_lora.parse_known_args()
-    return args_base # , args_lora_confirm, args_lora
+    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
+    args_lora, _ = parser_lora.parse_known_args()
+    return args_base, args_lora_confirm, args_lora
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -267,11 +273,11 @@ def create_model(args: TrainingArguments):
         optimizer = None
     else:
         optimizer = deepspeed.ops.adam.FusedAdam(model.parameters(),
-                                            lr=args.lr,
-                                            weight_decay=args.weight_decay,
-                                            betas=(args.beta1, args.beta2),
-                                            eps=args.eps)
-                  
+                                             lr=args.lr,
+                                             weight_decay=args.weight_decay,
+                                             betas=(args.beta1, args.beta2),
+                                             eps=args.eps)
+
     # DeepSpeed model
     model_engine, optimizer, _, _ = deepspeed.initialize(args=args,
                                                          model=model,
@@ -480,13 +486,13 @@ def train(args: TrainingArguments):
 
                 eval_loader.set_epoch(epoch)
                 with torch.inference_mode():
-                    for batch_tensor, batch_info in eval_loader:
+                    for (batch_tensor, batch_info), total_seqs in eval_loader:
                         # To device
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
                         output = model_engine(**batch_tensor, **batch_info)
-                        eval_acc = output.loss
+                        eval_acc = output.loss / total_seqs
                         eval_logits = output.logits
                         eval_loss = loss_func(eval_logits, batch_tensor['nz_shifted_label_ids'])
                         
@@ -500,7 +506,7 @@ def train(args: TrainingArguments):
 
                 if RANK == 0:
                     eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                    mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+                    mlflow.log_metrics(metrics={"eval/loss": eval_loss / dist.get_world_size(), "eval/acc": eval_acc}, step=step)
 
             ############ Save Checkpoint
             # Save model with lean state dict
@@ -530,11 +536,11 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    # args, args_lora_confirm, args_lora = parse_args()
-    args = parse_args()
+    args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
+    args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
         args.ds_offload = True
         args.use_zero_one_opt = False

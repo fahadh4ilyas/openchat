@@ -20,8 +20,6 @@ from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 from ochat.training_deepspeed.train_lora import TrainingArguments as LoraTrainingArguments, train as lora_train
-from ochat.training_deepspeed.train_offload import TrainingArguments as OffloadTrainingArguments, train as offload_train
-from ochat.training_deepspeed.train_lora_offload import TrainingArguments as LoraOffloadTrainingArguments, train as lora_offload_train
 
 from transformers.integrations import HfDeepSpeedConfig
 
@@ -63,6 +61,7 @@ class TrainingArguments(BaseModel):
     deepspeed: bool = Field(True)
     deepspeed_config: Union[str, dict] = Field(...)
     deepspeed_mpi: bool = Field(False)
+    ds_offload: bool = Field(False)
     ds_zero_op: int = Field(0)
     device: Optional[str] = Field(None)
 
@@ -243,13 +242,20 @@ def create_model(args: TrainingArguments):
 
     # Create model + optimizer + lr scheduler
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
-    # Model to assigned cuda device
-    model = model.to(args.local_rank)
+    if not args.ds_offload:
+        # Model to assigned cuda device
+        model = model.to(args.local_rank)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
     # Optimizer
-    if args.use_zero_one_opt:
+    if args.ds_offload:
+        optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(model.parameters(),
+                                                        lr=args.lr,
+                                                        weight_decay=args.weight_decay,
+                                                        betas=(args.beta1, args.beta2),
+                                                        eps=args.eps)
+    elif args.use_zero_one_opt:
         with open(args.deepspeed_config) as f:
             ds_config = json.load(f)
         ds_config['optimizer'] = {
@@ -531,24 +537,15 @@ if __name__ == "__main__":
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
-    use_offload = False
+    args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
-        use_offload = True
+        args.ds_offload = True
         args.use_zero_one_opt = False
     if args_lora_confirm.use_lora or args_lora.use_qlora:
         args = {**args.dict(), **vars(args_lora)}
-        args['ds_zero_op'] = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
-        if use_offload:
-            args = LoraOffloadTrainingArguments(**args)
+        args = LoraTrainingArguments(**args)
+        if args.ds_offload:
             args.use_qlora = False
-            lora_offload_train(args)
-        else:
-            args = LoraTrainingArguments(**args)
-            lora_train(args)
-    elif use_offload:
-        args = args.dict()
-        args['ds_zero_op'] = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
-        args = OffloadTrainingArguments(**args)
-        offload_train(args)
+        lora_train(args)
     else:
         train(args)
