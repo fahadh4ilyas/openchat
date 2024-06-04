@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 from functools import partial
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 from pydantic import BaseModel, Field, validator
 
@@ -16,12 +16,14 @@ import tqdm
 import mlflow
 import numpy as np
 
+from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
+
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader_ring import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
-from ochat.training_deepspeed.train_ring_lora import TrainingArguments as LoraTrainingArguments, train as lora_train
 
 from transformers.integrations import HfDeepSpeedConfig
+from transformers import BitsAndBytesConfig
 
 from flash_attn.losses.cross_entropy import CrossEntropyLoss
 
@@ -44,7 +46,7 @@ class TrainingArguments(BaseModel):
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
     use_zero_one_opt: bool = Field(False)
-    base_lr: float = Field(3e-4)
+    base_lr: float = Field(1e-2)
     lr: Optional[float] = Field(None)
     lr_min_ratio: float = Field(0.1)
     lr_warmup_ratio: float = Field(0.05)
@@ -58,6 +60,16 @@ class TrainingArguments(BaseModel):
     mlflow_password: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
+    lora_alpha: int = Field(32)
+    lora_r: int = Field(32)
+    lora_dropout: float = Field(0.05)
+    lora_target_modules: List[str] = Field(["q_proj", "k_proj", "v_proj", "o_proj"])
+    lora_bias: str = Field("none")
+    modules_to_save: Optional[List[str]] = Field(None)
+    use_qlora: bool = Field(False)
+    quant_bits: int = Field(4)
+    quant_type_4bit: str = Field("nf4")
+    use_double_quant_4bit: bool = Field(False)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
     deepspeed: bool = Field(True)
@@ -94,9 +106,7 @@ def _find_multiple(a, b):
     return (-(a // -b)) * b
 
 def parse_args():
-    parser_base = argparse.ArgumentParser(add_help=False)
-    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
-    parser_lora = argparse.ArgumentParser(add_help=False)
+    parser_base = argparse.ArgumentParser()
     # Distributed
     parser_base.add_argument("--local_rank",            type=int, required=True)
 
@@ -114,7 +124,7 @@ def parse_args():
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
     parser_base.add_argument("--use_zero_one_opt",      action='store_true')
-    parser_base.add_argument("--base_lr",               type=float, default=3e-4)
+    parser_base.add_argument("--base_lr",               type=float, default=1e-2)
     parser_base.add_argument("--lr",                    type=float, default=None)
     parser_base.add_argument("--lr_min_ratio",          type=float, default=0.1)
     parser_base.add_argument("--lr_warmup_ratio",       type=float,   default=0.05)
@@ -134,32 +144,25 @@ def parse_args():
     parser_base.add_argument("--run_name",              type=str, required=True)
 
     # LORA
-    parser_lora_confirm.add_argument("--use_lora",      action='store_true')
-    parser_lora.add_argument("--lora_alpha",            type=int, default=32)
-    parser_lora.add_argument("--lora_r",                type=int, default=32)
-    parser_lora.add_argument("--lora_dropout",          type=float, default=0.05)
-    parser_lora.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
-    parser_lora.add_argument("--lora_bias",             type=str, default="none")
-    parser_lora.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
+    parser_base.add_argument("--lora_alpha",            type=int, default=32)
+    parser_base.add_argument("--lora_r",                type=int, default=32)
+    parser_base.add_argument("--lora_dropout",          type=float, default=0.05)
+    parser_base.add_argument("--lora_target_modules",   type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser_base.add_argument("--lora_bias",             type=str, default="none")
+    parser_base.add_argument("--modules_to_save",       type=str, nargs="*", default=None)
 
     # QLORA
-    parser_lora.add_argument("--use_qlora",             action='store_true')
-    parser_lora.add_argument("--quant_bits",            type=int, default=4)
-    parser_lora.add_argument("--quant_type_4bit",       type=str, default='nf4')
-    parser_lora.add_argument("--use_double_quant_4bit", action='store_true')
+    parser_base.add_argument("--use_qlora",             action='store_true')
+    parser_base.add_argument("--quant_bits",            type=int, default=4)
+    parser_base.add_argument("--quant_type_4bit",       type=str, default='nf4')
+    parser_base.add_argument("--use_double_quant_4bit", action='store_true')
 
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
 
-    # Group parser
-    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
-
     # Parse known args
-    parser_group.parse_args()
-    args_base, _ = parser_base.parse_known_args()
-    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
-    args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_lora_confirm, args_lora
+    args_base = parser_base.parse_args()
+    return args_base
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -242,13 +245,43 @@ def create_model(args: TrainingArguments):
     # get checkpoint
     model_path = get_latest_checkpoint(args) or args.model_path
 
+    quantization_config = None
+    if args.use_qlora:
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=args.quant_bits == 8,
+            load_in_4bit=args.quant_bits == 4,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type=args.quant_type_4bit,
+            bnb_4bit_use_double_quant=args.use_double_quant_4bit
+        )
+
     # Create model + optimizer + lr scheduler
-    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3)
+    if model_path == args.model_path:
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(model_path, low_cpu_mem_usage=args.ds_zero_op != 3, quantization_config=quantization_config).to(args.local_rank)
+        if args.use_qlora:
+            model = prepare_model_for_kbit_training(model)
+        # Create lora config
+        lora_config = LoraConfig(
+                r=args.lora_r,
+                lora_alpha=args.lora_alpha,
+                target_modules=args.lora_target_modules,
+                lora_dropout=args.lora_dropout,
+                bias=args.lora_bias,
+                modules_to_save=args.modules_to_save
+            )
+        # Create Lora Model
+        model = get_peft_model(model, lora_config)
+    else:
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(args.model_path, low_cpu_mem_usage=args.ds_zero_op != 3, quantization_config=quantization_config).to(args.local_rank)
+        if args.use_qlora:
+            model = prepare_model_for_kbit_training(model)
+        model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
     if not args.ds_offload:
         # Model to assigned cuda device
         model = model.to(args.local_rank)
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
 
     # Optimizer
     if args.ds_offload:
@@ -537,7 +570,7 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args, args_lora_confirm, args_lora = parse_args()
+    args = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
@@ -545,11 +578,5 @@ if __name__ == "__main__":
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
         args.ds_offload = True
         args.use_zero_one_opt = False
-    if args_lora_confirm.use_lora or args_lora.use_qlora:
-        args = {**args.dict(), **vars(args_lora)}
-        args = LoraTrainingArguments(**args)
-        if args.ds_offload:
-            args.use_qlora = False
-        lora_train(args)
-    else:
-        train(args)
+        args.use_qlora = False
+    train(args)
