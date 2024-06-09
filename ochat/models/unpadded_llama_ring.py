@@ -32,6 +32,7 @@ from transformers.utils import logging
 from transformers.models.llama.configuration_llama import LlamaConfig
 
 try:
+    from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from ring_flash_attn import zigzag_ring_flash_attn_varlen_func
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
@@ -43,6 +44,10 @@ logger = logging.get_logger(__name__)
 @torch.jit.script  # type: ignore
 def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
+
+@torch.jit.script  # type: ignore
+def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)).sum()
 
 
 @torch.jit.script  # type: ignore
@@ -352,6 +357,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights:      Optional[torch.Tensor] = None
@@ -369,9 +375,10 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            loss = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+            acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / total_seqs
+            loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / total_seqs
 
         return CausalLMOutputWithPast(
-            loss=loss,  # type: ignore
+            loss=(loss, acc),  # type: ignore
             logits=logits
         )

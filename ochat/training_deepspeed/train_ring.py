@@ -23,8 +23,6 @@ from ochat.training_deepspeed.train_ring_lora import TrainingArguments as LoraTr
 
 from transformers.integrations import HfDeepSpeedConfig
 
-from flash_attn.losses.cross_entropy import CrossEntropyLoss
-
 try:
     import deepspeed
 except ImportError:
@@ -404,7 +402,6 @@ def train(args: TrainingArguments):
     step = 0
     latest_checkpoint = int((get_latest_checkpoint(args) or '_0').split('_')[-1])
     lr_this_step = None
-    loss_func = CrossEntropyLoss(inplace_backward=True)
     for epoch in range(args.epochs):
         print (f"[rank {RANK}]: Epoch {epoch}")
 
@@ -425,10 +422,8 @@ def train(args: TrainingArguments):
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
             # Update
-            output = model_engine(**batch_tensor, **batch_info)
-            acc = output.loss
-            logits = output.logits
-            loss = loss_func(logits, batch_tensor['nz_shifted_label_ids'])
+            output = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs)
+            loss, acc = output.loss
 
             model_engine.backward(loss)
 
@@ -440,14 +435,14 @@ def train(args: TrainingArguments):
 
             model_engine.step()
 
-            dist.reduce(loss, 0, dist.ReduceOp.AVG)
-            dist.reduce(acc, 0, dist.ReduceOp.SUM)
+            dist.reduce(loss, 0)
+            dist.reduce(acc, 0,)
 
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(metrics={
                     "train/loss": loss.item(),
-                    "train/acc":  acc.item() / total_seqs,
+                    "train/acc":  acc.item(),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps
                 }, step=step)
@@ -492,10 +487,8 @@ def train(args: TrainingArguments):
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
-                        output = model_engine(**batch_tensor, **batch_info)
-                        eval_acc = output.loss / total_seqs
-                        eval_logits = output.logits
-                        eval_loss = loss_func(eval_logits, batch_tensor['nz_shifted_label_ids'])
+                        output = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs)
+                        eval_loss, eval_acc = output.loss
                         
                         # Accumulate eval loss
                         eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
