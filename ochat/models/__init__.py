@@ -11,3 +11,4 @@ from ochat.models.unpadded_gemma import GemmaForCausalLM
 from ochat.models.unpadded_phi import PhiForCausalLM
 from ochat.models.unpadded_phi_ori import PhiForCausalLM as OriPhiForCausalLM
 from ochat.models.unpadded_qwen2 import Qwen2ForCausalLM
+from ochat.models.unpadded_qwen2_ring import Qwen2ForCausalLM as Qwen2RingForCausalLM

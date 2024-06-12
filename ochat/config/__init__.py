@@ -263,6 +263,21 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4 Correct")
     ),
 
+    "qwen2Ring": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
+                                       use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(ochat.models.Qwen2RingForCausalLM.from_pretrained,
+                                          torch_dtype=torch.bfloat16),
+
+        # Conversation Template
+        conversation_template=partial(ConversationTemplate,
+                                      role_prefix=_v3_2_role_prefix,
+                                      eot="<|end_of_turn|>",
+                                      inference_condition="GPT4 Correct")
+    ),
+
     "llama_chatml": ModelConfig(
         # Model
         model_max_context=4096,
@@ -477,6 +492,22 @@ MODEL_CONFIG_MAP = {
         model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
                                        use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(ochat.models.Qwen2ForCausalLM.from_pretrained,
+                                          torch_dtype=torch.bfloat16),
+
+        # Conversation Template
+        conversation_template=partial(ChatMLConversationTemplate,
+                                      model='qwen2',
+                                      role_prefix=_chatml_role_prefix,
+                                      prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+                                      inference_condition="GPT4 correct")
+    ),
+
+    "qwen2Ring_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
+                                       use_fast=False),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(ochat.models.Qwen2RingForCausalLM.from_pretrained,
                                           torch_dtype=torch.bfloat16),
 
         # Conversation Template
