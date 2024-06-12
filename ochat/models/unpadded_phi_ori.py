@@ -29,7 +29,7 @@ from transformers.utils import logging
 from .configuration_phi import PhiConfig
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_varlen_func
+    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
@@ -206,12 +206,18 @@ class UnpaddedPhiAttention(nn.Module):
         query_states = torch.cat((query_rot, query_pass), dim=-1)
         key_states = torch.cat((key_rot, key_pass), dim=-1)
 
-        attn_output = flash_attn_varlen_func(
-            q=query_states, k=key_states, v=value_states,
-            cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
+        if cu_seqlens[-1] == max_seqlen:
+            attn_output = flash_attn_func(
+                q=query_states, k=key_states, v=value_states,
 
-            dropout_p=self.attention_dropout, causal=True)
+                dropout_p=self.attention_dropout, causal=True)
+        else:
+            attn_output = flash_attn_varlen_func(
+                q=query_states, k=key_states, v=value_states,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
+
+                dropout_p=self.attention_dropout, causal=True)
 
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
         return self.dense(attn_output)

@@ -33,7 +33,7 @@ from transformers.models.qwen2.configuration_qwen2 import Qwen2Config
 
 try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
-    from ring_flash_attn import zigzag_ring_flash_attn_varlen_func
+    from ring_flash_attn import zigzag_ring_flash_attn_func, zigzag_ring_flash_attn_varlen_func
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
 
@@ -179,11 +179,16 @@ class UnpaddedQwen2Attention(nn.Module):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids)
 
         # flash attn
-        attn_output = zigzag_ring_flash_attn_varlen_func(
-            q=query_states, k=key_states, v=value_states,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-            dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+        if cu_seqlens[-1] == max_seqlen:
+            attn_output = zigzag_ring_flash_attn_func(
+                q=query_states, k=key_states, v=value_states,
+                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+        else:
+            attn_output = zigzag_ring_flash_attn_varlen_func(
+                q=query_states, k=key_states, v=value_states,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore

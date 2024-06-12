@@ -32,7 +32,7 @@ from transformers.utils import logging
 from transformers.models.llama.configuration_llama import LlamaConfig
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_varlen_func
+    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
@@ -215,11 +215,16 @@ class UnpaddedLlamaAttention(nn.Module):
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids)
 
         # flash attn
-        attn_output = flash_attn_varlen_func(
-            q=query_states, k=key_states, v=value_states,
-            cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-            max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-            dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+        if cu_seqlens[-1] == max_seqlen:
+            attn_output = flash_attn_func(
+                q=query_states, k=key_states, v=value_states,
+                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+        else:
+            attn_output = flash_attn_varlen_func(
+                q=query_states, k=key_states, v=value_states,
+                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
