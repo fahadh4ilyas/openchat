@@ -378,11 +378,11 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
             assert nz_shifted_loss_weights is not None
 
             if num_seq > 0:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, acc
             else:
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), acc
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
