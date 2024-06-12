@@ -48,7 +48,7 @@ def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights:
 
 # @torch.jit.script  # type: ignore
 def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)).sum()
+    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
 
 
 @torch.jit.script  # type: ignore
