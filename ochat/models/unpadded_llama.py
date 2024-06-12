@@ -33,6 +33,7 @@ from transformers.models.llama.configuration_llama import LlamaConfig
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
+    from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
@@ -46,9 +47,9 @@ def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights:
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-@torch.jit.script  # type: ignore
+# @torch.jit.script  # type: ignore
 def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
+    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)).sum()
 
 
 @torch.jit.script  # type: ignore
