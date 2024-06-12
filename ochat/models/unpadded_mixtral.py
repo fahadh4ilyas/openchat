@@ -34,6 +34,7 @@ from transformers.models.mixtral.configuration_mixtral import MixtralConfig
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
+    from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
@@ -87,9 +88,9 @@ def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights:
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-@torch.jit.script  # type: ignore
+# @torch.jit.script  # type: ignore
 def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * torch.nn.functional.cross_entropy(logits, labels, reduction="none")).sum()
+    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
 
 
 @torch.jit.script  # type: ignore
@@ -497,11 +498,11 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                 )
             
             if num_seq > 0:
-                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
+                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), acc
             else:
-                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), \
-                    weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), acc
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

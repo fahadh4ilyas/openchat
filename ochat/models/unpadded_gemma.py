@@ -33,6 +33,7 @@ from transformers.models.gemma.configuration_gemma import GemmaConfig
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
+    from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
@@ -40,12 +41,12 @@ except ImportError:
 
 logger = logging.get_logger(__name__)
 
-@torch.jit.script
+# @torch.jit.script
 def lm_head_with_loss(embed_weights: torch.Tensor, hidden_states: torch.Tensor, nz_shifted_label_ids: torch.Tensor, nz_shifted_loss_weights: torch.Tensor, num_seq: int):
     logits = nn.functional.linear(hidden_states, embed_weights)
 
-    loss = (nz_shifted_loss_weights * torch.nn.functional.cross_entropy(logits, nz_shifted_label_ids, reduction="none")).sum() / num_seq
     token_accuracy = (nz_shifted_loss_weights * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)).sum() / num_seq
+    loss = (nz_shifted_loss_weights * cross_entropy_loss(logits, nz_shifted_label_ids, inplace_backward = True)[0]).sum() / num_seq
     return (loss, token_accuracy), logits
 
 
