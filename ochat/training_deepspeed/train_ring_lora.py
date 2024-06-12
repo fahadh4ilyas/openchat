@@ -455,8 +455,7 @@ def train(args: TrainingArguments):
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
             # Update
-            output = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs)
-            loss, acc = output.loss
+            loss, acc = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs).loss
 
             model_engine.backward(loss)
 
@@ -520,8 +519,7 @@ def train(args: TrainingArguments):
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
-                        output = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs)
-                        eval_loss, eval_acc = output.loss
+                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs).loss
                         
                         # Accumulate eval loss
                         eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
