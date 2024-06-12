@@ -178,7 +178,7 @@ class UnpaddedLlamaAttention(nn.Module):
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
-                q=query_states, k=key_states, v=value_states,
+                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
                 dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
         else:
             attn_output = flash_attn_varlen_func(
