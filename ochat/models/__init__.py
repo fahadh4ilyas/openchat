@@ -7,6 +7,7 @@ from ochat.models.unpadded_mistral_split import MistralForCausalLM as MistralSpl
 from ochat.models.unpadded_mistral_long import MistralForCausalLM as MistralLongForCausalLM
 from ochat.models.unpadded_mistral_ring import MistralForCausalLM as MistralRingForCausalLM
 from ochat.models.unpadded_mixtral import MixtralForCausalLM
+from ochat.models.unpadded_mixtral_ring import MixtralForCausalLM as MixtralRingForCausalLM
 from ochat.models.unpadded_gemma import GemmaForCausalLM
 from ochat.models.unpadded_phi import PhiForCausalLM
 from ochat.models.unpadded_phi_ori import PhiForCausalLM as OriPhiForCausalLM
