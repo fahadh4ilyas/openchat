@@ -170,8 +170,6 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
 
     schema = pyarrow.schema(schema, metadata={"metadata_json": orjson.dumps(metadata)})
 
-    max_workers = args.max_workers or os.cpu_count()
-
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
         handles = [executor.submit(convert_conversation_batch,
             batch=batch,
