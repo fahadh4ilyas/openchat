@@ -18,7 +18,6 @@ dependencies = [
     "numba", 
     "orjson", 
     "torch>=2.1.0", 
-    "ray", 
     "sentencepiece", 
     "transformers>=4.38.0",
     "peft",

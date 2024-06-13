@@ -244,21 +244,6 @@ OpenChat may sometimes generate harmful, hate speech, biased responses, or answe
 
 Our OpenChat 3.5 code and models are distributed under the Apache License 2.0.
 
-## <a id="legacy-models"></a> Legacy Models
-
-The following models are older versions of OpenChat and have inferior performance compared to the latest version. They will be deprecated in the next release. Please note that OpenChat V1 and V2 series are now deprecated, [please install 3.1.x for using V1 and V2 models](https://github.com/imoneoi/openchat/tree/83a683c775c77867cc45937fafdf48e8dcb68daa)
-
-To run the models on multiple GPUs with smaller VRAM, you can enable tensor parallelization, for example, using the `--tensor-parallel-size 2` flag.
-
-<details>
-  <summary>OpenChat V3 (click to expand)</summary>
-
-| Model        | Size | Context | Weights                                                      | Serving                                                                                                      |
-|--------------|------|---------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
-| OpenChat 3.2 SUPER | 13B  | 4096    | [Huggingface](https://huggingface.co/openchat/openchat_v3.2_super) | `python -m ochat.serving.openai_api_server --model openchat/openchat_v3.2_super --engine-use-ray --worker-use-ray` |
-
-</details>
-
 ## Contact
 
 💌 We are a student team from Tsinghua University, working on OpenChat, a project that requires additional computing power or LLMs API keys for further development. If you are interested in our project and would like to offer support, please feel free to reach out to us:

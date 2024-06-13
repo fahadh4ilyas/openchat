@@ -4,6 +4,7 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
+import concurrent.futures
 from typing import List, Optional
 import argparse
 import os
@@ -11,7 +12,7 @@ import random
 
 from pydantic import BaseModel, Field
 
-import ray
+import concurrent
 import orjson
 import pyarrow
 from pyarrow import parquet
@@ -33,6 +34,7 @@ class DataArguments(BaseModel):
     data_length_multiple_of: int = Field(1)
     pretokenized_in_files: bool = Field(False)
     ignore_last_token: bool = Field(False)
+    max_workers: Optional[int] = Field(None)
 
 
 PAD_TOKEN_ID = 0
@@ -101,7 +103,6 @@ def add_single_conv(output: dict, tokens: list, weights: list, args: DataArgumen
         output[k].append(v)
 
 
-@ray.remote
 def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataArguments):
     from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation
 
@@ -169,18 +170,17 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
 
     schema = pyarrow.schema(schema, metadata={"metadata_json": orjson.dumps(metadata)})
 
-    # launch remote workers
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, num_cpus=os.cpu_count())
+    max_workers = args.max_workers or os.cpu_count()
 
-    handles = [convert_conversation_batch.remote(
-        batch=batch,
-        schema=schema,
-        args=args
-    ) for batch in _split(conversations, int(ray.available_resources()["CPU"]))]
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+        handles = [executor.submit(convert_conversation_batch,
+            batch=batch,
+            schema=schema,
+            args=args
+        ) for batch in _split(conversations, executor._max_workers)]
 
     # write
-    parquet.write_table(pyarrow.concat_tables([ray.get(handle) for handle in handles]), f"{args.out_prefix}.{split_name}.parquet")
+    parquet.write_table(pyarrow.concat_tables([handle.result() for handle in handles]), f"{args.out_prefix}.{split_name}.parquet")
 
 
 def generate_dataset(args: DataArguments):
@@ -221,6 +221,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-length-multiple-of", type=int, default=1)
     parser.add_argument("--pretokenized-in-files", action="store_true")
     parser.add_argument("--ignore-last-token", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=None)
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))
