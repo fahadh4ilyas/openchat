@@ -40,6 +40,10 @@ class DataArguments(BaseModel):
 PAD_TOKEN_ID = 0
 
 
+def job_print(job_id: int, *args, **kwargs):
+    print (f'[JOB ID: {job_id}]', *args, **kwargs)
+
+
 def _split(a: list, n: int):
     # Split list a to n chunks
     # https://stackoverflow.com/questions/2130016/splitting-a-list-into-n-parts-of-approximately-equal-length
@@ -103,7 +107,7 @@ def add_single_conv(output: dict, tokens: list, weights: list, args: DataArgumen
         output[k].append(v)
 
 
-def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataArguments):
+def convert_conversation_batch(job_id: int, batch: list, schema: pyarrow.Schema, args: DataArguments):
     from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation
 
     # Tokenization
@@ -112,7 +116,7 @@ def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataAr
     conv_template = model_config.conversation_template(tokenizer=tokenizer)
 
     # Decode data
-    print ("Decoding JSON ...")
+    job_print (job_id, "Decoding JSON ...")
     if args.pretokenized_in_files:
         batch = [PretokenizedConversation(**orjson.loads(json_line)) for json_line in batch]
         tokens_list = [b.input_ids for b in batch]
@@ -121,7 +125,7 @@ def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataAr
         batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
 
         # Tokenize
-        print ("Tokenizing ...")
+        job_print (job_id, "Tokenizing ...")
         tokens_list = []
         weights_list = []
         if len(batch) > 0:
@@ -133,7 +137,7 @@ def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataAr
                 eos_final=args.eos_final)
 
     # Generate data
-    print ("Generating ...")
+    job_print (job_id, "Generating ...")
     max_context = args.max_seq_length or model_config.model_max_context
 
     outputs = {k: [] for k in schema.names}
@@ -147,7 +151,7 @@ def convert_conversation_batch(batch: list, schema: pyarrow.Schema, args: DataAr
         # Add to results
         add_single_conv(outputs, tokens, weights, args)
 
-    print ("Chunk finish")
+    job_print (job_id, "Chunk finish")
 
     return pyarrow.Table.from_pydict(outputs, schema=schema)
 
@@ -172,10 +176,11 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
         handles = [executor.submit(convert_conversation_batch,
+            job_id=job_id,
             batch=batch,
             schema=schema,
             args=args
-        ) for batch in _split(conversations, executor._max_workers)]
+        ) for job_id, batch in enumerate(_split(conversations, executor._max_workers))]
 
     # write
     parquet.write_table(pyarrow.concat_tables([handle.result() for handle in handles]), f"{args.out_prefix}.{split_name}.parquet")
