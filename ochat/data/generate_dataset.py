@@ -89,7 +89,7 @@ def add_single_conv(output: dict, tokens: list, weights: list, args: DataArgumen
         "total_length": length,
 
         "seqlens": [length],
-        "nz_input_ids": tokens[:-1],
+        "nz_input_ids": tokens,
         "nz_position_ids": list(range(length)),
 
         "nz_shifted_label_ids":    labels,
