@@ -220,7 +220,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-length-multiple-of", type=int, default=1)
     parser.add_argument("--pretokenized-in-files", action="store_true")
     parser.add_argument("--ignore-last-token", action="store_true")
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
 
     args = DataArguments(**vars(args))
 
