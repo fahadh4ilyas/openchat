@@ -82,6 +82,7 @@ def add_single_conv(output: dict, tokens: list, weights: list, args: DataArgumen
         tokens.extend(last_token + [PAD_TOKEN_ID] * (addition - 1))
         weights.extend([0.0] * addition)
         labels.extend([LABEL_PAD_TOKEN_ID] * addition)
+    length = len(tokens)
 
     # populate results
     results = {
