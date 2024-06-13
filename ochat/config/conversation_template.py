@@ -21,6 +21,10 @@ class Conversation(BaseModel):
     condition: str = ""
     system: str = ""
 
+class PretokenizedConversation(BaseModel):
+    input_ids: List[int]
+    loss_weights: List[float]
+
 
 class ConversationTemplate(BaseModel):
     tokenizer: Callable
