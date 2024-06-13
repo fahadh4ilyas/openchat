@@ -400,7 +400,7 @@ def train(args: TrainingArguments):
 
             # Update
             loss, acc = model(**batch_tensor, **batch_info, num_seq=all_numseq).loss
-            
+
             if isinstance(loss, tuple):
                 loss, aux_loss = loss
             else:
@@ -456,7 +456,7 @@ def train(args: TrainingArguments):
                         # Eval
                         eval_loss, eval_acc = model(**batch_tensor, **batch_info, num_seq=all_numseq).loss
 
-                        if isinstance(loss, tuple):
+                        if isinstance(eval_loss, tuple):
                             eval_loss, _ = eval_loss
                         
                         # Accumulate eval loss

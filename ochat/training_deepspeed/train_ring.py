@@ -75,7 +75,6 @@ class TrainingArguments(BaseModel):
 
 
 PAD_ID     = 0
-LABEL_PAD_ID = -100
 BATCH_KEYS = {
     "seqlens": torch.long,
     "nz_input_ids": torch.long,
@@ -188,7 +187,7 @@ def batch_to_tensor(batch):
 
             "nz_input_ids": (pad_len, PAD_ID),
             "nz_position_ids": (pad_len, 0),
-            "nz_shifted_label_ids": (pad_len, LABEL_PAD_ID),
+            "nz_shifted_label_ids": (pad_len, PAD_ID),
             "nz_shifted_loss_weights": (pad_len, 0),
         }
         for k, pad_spec in padding_specs.items():
@@ -424,6 +423,11 @@ def train(args: TrainingArguments):
             # Update
             loss, acc = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs).loss
 
+            if isinstance(loss, tuple):
+                loss, aux_loss = loss
+            else:
+                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+
             model_engine.backward(loss)
 
             if model_engine.is_gradient_accumulation_boundary():
@@ -487,6 +491,9 @@ def train(args: TrainingArguments):
 
                         # Eval
                         eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, total_seqs=total_seqs).loss
+
+                        if isinstance(eval_loss, tuple):
+                            eval_loss, _ = eval_loss
                         
                         # Accumulate eval loss
                         eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
@@ -498,7 +505,7 @@ def train(args: TrainingArguments):
 
                 if RANK == 0:
                     eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                    mlflow.log_metrics(metrics={"eval/loss": eval_loss / dist.get_world_size(), "eval/acc": eval_acc}, step=step)
+                    mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
 
             ############ Save Checkpoint
             # Save model with lean state dict

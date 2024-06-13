@@ -20,6 +20,7 @@ from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 from ochat.training_deepspeed.train_lora import TrainingArguments as LoraTrainingArguments, train as lora_train
+from ochat.training_deepspeed.train_ring import train as train_ring, lora_train as lora_train_ring
 
 from transformers.integrations import HfDeepSpeedConfig
 
@@ -92,6 +93,7 @@ def _find_multiple(a, b):
 
 def parse_args():
     parser_base = argparse.ArgumentParser(add_help=False)
+    parser_ring_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
@@ -130,6 +132,9 @@ def parse_args():
     parser_base.add_argument("--experiment_name",       type=str, required=True)
     parser_base.add_argument("--run_name",              type=str, required=True)
 
+    # RING
+    parser_ring_confirm.add_argument("--use_ring",      action='store_true')
+
     # LORA
     parser_lora_confirm.add_argument("--use_lora",      action='store_true')
     parser_lora.add_argument("--lora_alpha",            type=int, default=32)
@@ -149,14 +154,15 @@ def parse_args():
     parser_base = deepspeed.add_config_arguments(parser_base)
 
     # Group parser
-    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_lora_confirm, parser_lora])
+    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_ring_confirm, parser_lora_confirm, parser_lora])
 
     # Parse known args
     parser_group.parse_args()
     args_base, _ = parser_base.parse_known_args()
+    args_ring_confirm, _ = parser_ring_confirm.parse_known_args()
     args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
     args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_lora_confirm, args_lora
+    return args_base, args_ring_confirm, args_lora_confirm, args_lora
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -423,7 +429,7 @@ def train(args: TrainingArguments):
 
             # Update
             loss, acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
-            
+
             if isinstance(loss, tuple):
                 loss, aux_loss = loss
             else:
@@ -490,7 +496,7 @@ def train(args: TrainingArguments):
                         # Eval
                         eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
 
-                        if isinstance(loss, tuple):
+                        if isinstance(eval_loss, tuple):
                             eval_loss, _ = eval_loss
                         
                         # Accumulate eval loss
@@ -533,7 +539,7 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args, args_lora_confirm, args_lora = parse_args()
+    args, args_ring_confirm, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
@@ -546,6 +552,11 @@ if __name__ == "__main__":
         args = LoraTrainingArguments(**args)
         if args.ds_offload:
             args.use_qlora = False
-        lora_train(args)
+        if args_ring_confirm.use_ring:
+            lora_train_ring(args)
+        else:
+            lora_train(args)
+    elif args_ring_confirm.use_ring:
+        train_ring(args)
     else:
         train(args)
