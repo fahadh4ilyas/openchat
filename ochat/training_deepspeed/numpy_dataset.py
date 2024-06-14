@@ -1,5 +1,6 @@
 import pyarrow.parquet as pq
 import orjson
+from typing import Union, Iterable
 
 
 class NumpyDataset:
@@ -16,10 +17,10 @@ class NumpyDataset:
         if self.metadata is not None:
             self.metadata = orjson.loads(self.metadata)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.length
 
-    def __getitem__(self, indices):
+    def __getitem__(self, indices: Union[str, Iterable[int]]):
         if isinstance(indices, str):
             return self.dataset[indices]
         

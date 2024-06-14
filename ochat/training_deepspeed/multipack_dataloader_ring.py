@@ -1,5 +1,7 @@
-from typing import Any, Optional, List, Callable
+from typing import Any, Optional, Callable, Dict, Tuple, List
+from numbers import Number
 
+import torch
 import torch.distributed as dist
 
 import numpy as np
@@ -29,7 +31,7 @@ def ffd_check(a: np.ndarray, c: int, n: int):
 
 
 @numba.njit
-def ffd_with_result(a: np.ndarray, c: int, start_index: int):
+def ffd_with_result(a: np.ndarray, c: int, start_index: int) -> List[List[int]]:
     # First-fit-decreasing bin packing (with result return)
 
     indices = np.argsort(a)[::-1]
@@ -54,7 +56,7 @@ def ffd_with_result(a: np.ndarray, c: int, start_index: int):
 
 
 @numba.njit
-def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int):
+def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int) -> Tuple[List[List[int]], int, int]:
     # Dynamic batch allocator, similar to Multifit
     # https://en.wikipedia.org/wiki/Multifit_algorithm
     # ~99.5% efficiency on OpenChat training set (12 * 2048 ctx len)
@@ -91,7 +93,7 @@ def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int):
     return result, s, len(result) * c * n
 
 
-def extract_local(value, rank, world_size):
+def extract_local(value: np.ndarray, rank: int, world_size: int):
     value_chunks = np.split(value, 2 * world_size)
     local_value = np.concatenate(
         [value_chunks[rank], value_chunks[2 * world_size - rank - 1]]
@@ -109,7 +111,7 @@ class MultipackDistributedDataloader:
         lengths: np.ndarray,
 
         batch_max_length: int,
-        collate_fn: Callable,
+        collate_fn: Callable[[Dict[str, np.ndarray]], Tuple[Dict[str, torch.Tensor], Dict[str, Number]]],
 
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
@@ -150,7 +152,7 @@ class MultipackDistributedDataloader:
     def set_epoch(self, epoch: int):
         self.epoch = epoch
 
-    def generate_batches(self, set_stats=False):
+    def generate_batches(self, set_stats=False) -> List[List[int]]:
         indices = np.random.default_rng(seed=self.seed + self.epoch).permutation(len(self.lengths))
 
         lengths        = self.lengths[indices]
@@ -169,7 +171,7 @@ class MultipackDistributedDataloader:
 
         return batched_indices
     
-    def prepare_dataset(self, dataset: dict):
+    def prepare_dataset(self, dataset: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
 
         dataset['seqlens'] = dataset['seqlens'] // self.num_replicas
 
@@ -186,13 +188,13 @@ class MultipackDistributedDataloader:
 
         for indices in all_indices:
             dataset = self.dataset[indices]
-            total_seqs = dataset['num_seqs'].sum()
+            total_seqs: float = dataset['num_seqs'].sum()
             dataset = self.prepare_dataset(dataset)
             yield self.collate_fn(dataset), total_seqs
 
-    def num_batches(self):
+    def num_batches(self) -> int:
         batches = self.generate_batches()
         return len(batches)
 
-    def efficiency(self):
+    def efficiency(self) -> float:
         return self.eff_total_used / self.eff_total_slots

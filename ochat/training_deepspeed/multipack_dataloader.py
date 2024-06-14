@@ -1,5 +1,7 @@
-from typing import Any, Optional, List, Callable
+from typing import Any, Optional, Callable, Dict, Tuple, List
+from numbers import Number
 
+import torch
 import torch.distributed as dist
 
 import numpy as np
@@ -29,7 +31,7 @@ def ffd_check(a: np.ndarray, c: int, n: int):
 
 
 @numba.njit
-def ffd_with_result(a: np.ndarray, c: int, start_index: int):
+def ffd_with_result(a: np.ndarray, c: int, start_index: int) -> List[List[int]]:
     # First-fit-decreasing bin packing (with result return)
 
     indices = np.argsort(a)[::-1]
@@ -54,7 +56,7 @@ def ffd_with_result(a: np.ndarray, c: int, start_index: int):
 
 
 @numba.njit
-def allocate(lengths: np.ndarray, numseqs: np.ndarray, lengths_cumsum: np.ndarray, rank: int, c: int, n: int):
+def allocate(lengths: np.ndarray, numseqs: np.ndarray, lengths_cumsum: np.ndarray, rank: int, c: int, n: int) -> Tuple[List[List[int]], List[float], int, int]:
     # Dynamic batch allocator, similar to Multifit
     # https://en.wikipedia.org/wiki/Multifit_algorithm
     # ~99.5% efficiency on OpenChat training set (12 * 2048 ctx len)
@@ -107,7 +109,7 @@ class MultipackDistributedDataloader:
         numseqs: np.ndarray,
 
         batch_max_length: int,
-        collate_fn: Callable,
+        collate_fn: Callable[[Dict[str, np.ndarray]], Tuple[Dict[str, torch.Tensor], Dict[str, Number]]],
 
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
@@ -149,7 +151,7 @@ class MultipackDistributedDataloader:
     def set_epoch(self, epoch: int):
         self.epoch = epoch
 
-    def generate_batches(self, set_stats=False):
+    def generate_batches(self, set_stats=False) -> Tuple[List[List[int]], List[float], List[float]]:
         indices = np.random.default_rng(seed=self.seed + self.epoch).permutation(len(self.lengths))
 
         lengths        = self.lengths[indices]
@@ -179,9 +181,9 @@ class MultipackDistributedDataloader:
         for batch, totseq, curseq in zip(all_batches, all_totseqs, all_curseqs):
             yield self.collate_fn(self.dataset[batch]), totseq, curseq
 
-    def num_batches(self):
+    def num_batches(self) -> int:
         batches, _, _ = self.generate_batches()
         return len(batches)
 
-    def efficiency(self):
+    def efficiency(self) -> float:
         return self.eff_total_used / self.eff_total_slots

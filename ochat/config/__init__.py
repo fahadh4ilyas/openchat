@@ -23,10 +23,10 @@ PREFIXES = {
 }
 
 
-def _v3_2_role_prefix(from_role, condition):
+def _v3_2_role_prefix(from_role: str, condition: str):
     return f"{condition} {_V3_2_PREFIXES.get(from_role, from_role+':')}".strip()
 
-def _chatml_role_prefix(from_role, condition, model):
+def _chatml_role_prefix(from_role: str, condition: str, model: str):
     return f"{condition} {PREFIXES.get(model, {}).get(from_role, from_role)}".strip()
 
 

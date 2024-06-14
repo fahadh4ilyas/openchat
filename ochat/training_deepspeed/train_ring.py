@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 from functools import partial
-from typing import Optional, Union, Literal
+from typing import Optional, Union, Literal, Tuple, Dict
 
 from pydantic import BaseModel, Field, validator
 
@@ -92,7 +92,7 @@ MODEL_LR = ['mistral', 'qwen2', 'mixtral']
 def _find_multiple(a, b):
     return (-(a // -b)) * b
 
-def parse_args():
+def parse_args() -> Tuple[argparse.Namespace, argparse.Namespace, argparse.Namespace]:
     parser_base = argparse.ArgumentParser(add_help=False)
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
@@ -163,7 +163,7 @@ def parse_args():
     return args_base, args_lora_confirm, args_lora
 
 
-def create_dataset(args: TrainingArguments, split_name):
+def create_dataset(args: TrainingArguments, split_name: str):
     # Load data
     filename = f"{args.data_prefix}.{split_name}.parquet"
     if not os.path.isfile(filename):
@@ -174,7 +174,7 @@ def create_dataset(args: TrainingArguments, split_name):
     return NumpyDataset(filename)
 
 
-def batch_to_tensor(batch):
+def batch_to_tensor(batch: Dict[str, np.ndarray]):
     # Concat batches
     batch = {k: np.concatenate(batch[k], axis=0) for k in BATCH_KEYS.keys()}
 
@@ -198,7 +198,7 @@ def batch_to_tensor(batch):
             batch[k] = np.concatenate((batch[k], np.full(*pad_spec, dtype=batch[k].dtype)), axis=0)
 
     # to tensor
-    batch_tensor = {}
+    batch_tensor: Dict[str, torch.Tensor] = {}
     for k, dtype in BATCH_KEYS.items():
         batch_tensor[k] = torch.from_numpy(batch[k]).to(dtype)
 
@@ -212,7 +212,7 @@ def batch_to_tensor(batch):
     return batch_tensor, batch_info
 
 
-def create_distributed_dataloader(args: TrainingArguments, data):
+def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
     # Multipack dataloader
     return MultipackDistributedDataloader(
         dataset=data,
@@ -260,7 +260,7 @@ def create_model(args: TrainingArguments):
                                                         eps=args.eps)
     elif args.use_zero_one_opt:
         with open(args.deepspeed_config) as f:
-            ds_config = json.load(f)
+            ds_config: dict = json.load(f)
         ds_config['optimizer'] = {
             "type": "ZeroOneAdam",
             "params": {
@@ -302,7 +302,7 @@ def cosine_schedule_with_warmup_lr_lambda(
     return min_ratio + max(0.0, (1 - min_ratio) * 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
 
 
-def create_lr_scheduler(args: TrainingArguments, train_total_steps):
+def create_lr_scheduler(args: TrainingArguments, train_total_steps: int):
     lr_scheduler = partial(
         cosine_schedule_with_warmup_lr_lambda,
 
@@ -318,7 +318,7 @@ def save_tokenizer(args: TrainingArguments, save_path):
     MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(args.model_path).save_pretrained(save_path)
 
 
-def save_openchat_metadata(args: TrainingArguments, epoch, latest_step, save_path):
+def save_openchat_metadata(args: TrainingArguments, epoch: Union[int, float], latest_step: int, save_path):
     metadata = vars(args)
     metadata["epoch"] = epoch
     metadata["latest_step"] = latest_step
@@ -327,7 +327,7 @@ def save_openchat_metadata(args: TrainingArguments, epoch, latest_step, save_pat
         json.dump(metadata, f, default=lambda o: "<non-serializable>")
 
 
-def calculate_auto_lr(base_lr, lr, batch_max_len, model_type, train_dataset):
+def calculate_auto_lr(base_lr: float, lr: Optional[float], batch_max_len: int, model_type: str, train_dataset: NumpyDataset):
     if lr is not None:
         return lr
     
@@ -444,7 +444,7 @@ def train(args: TrainingArguments):
             model_engine.step()
 
             dist.reduce(loss, 0)
-            dist.reduce(acc, 0,)
+            dist.reduce(acc, 0)
 
             # Logging
             if RANK == 0:
@@ -563,7 +563,7 @@ if __name__ == "__main__":
     args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
-        deepspeed_config = json.load(f)
+        deepspeed_config: dict = json.load(f)
     args.ds_zero_op = deepspeed_config.get('zero_optimization', {}).get('stage', 2)
     if deepspeed_config.get('zero_optimization', {}).get('offload_optimizer', False) or deepspeed_config.get('zero_optimization', {}).get('offload_param', False):
         args.ds_offload = True
