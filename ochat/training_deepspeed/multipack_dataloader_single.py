@@ -51,7 +51,7 @@ def ffd_with_result(a: np.ndarray, c: int, start_index: int) -> List[int]:
     return bins_result
 
 
-def allocate(lengths: np.ndarray, numseqs: np.ndarray, lengths_cumsum: np.ndarray, rank: int, c: int, n: int) -> Tuple[List[List[int]], List[int], int, int]:
+def allocate(lengths: np.ndarray, numseqs: np.ndarray, lengths_cumsum: np.ndarray, rank: int, c: int, n: int) -> Tuple[List[List[int]], List[float], int, int]:
     # Dynamic batch allocator, similar to Multifit
     # https://en.wikipedia.org/wiki/Multifit_algorithm
     # ~99.5% efficiency on OpenChat training set (12 * 2048 ctx len)
