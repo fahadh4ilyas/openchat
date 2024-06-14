@@ -5,7 +5,7 @@ import json
 import shutil
 from pathlib import Path
 from functools import partial
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 
 from pydantic import BaseModel, Field, validator
 
@@ -37,10 +37,12 @@ class TrainingArguments(BaseModel):
     data_prefix: str = Field(...)
     save_path: str = Field(...)
     save_every: Optional[int] = Field(None, gt=0)
+    save_strategy: Union[Literal['epoch'], Literal['step']] = Field('epoch')
     checkpoint_every: int = Field(0, ge=0)
     max_checkpoint: int = Field(1, gt=0)
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
+    max_steps: int = Field(0)
     use_zero_one_opt: bool = Field(False)
     base_lr: float = Field(3e-4)
     lr: Optional[float] = Field(None)
@@ -101,6 +103,7 @@ def parse_args():
     parser_base.add_argument("--model_path",            type=str, required=True)
     parser_base.add_argument("--data_prefix",           type=str, required=True)
     parser_base.add_argument("--save_path",             type=str, required=True)
+    parser_base.add_argument("--save_strategy",         type=str, choices=['epoch', 'step'], default='epoch')
     parser_base.add_argument("--save_every",            type=int, default=None)
     parser_base.add_argument("--checkpoint_every",      type=int, default=0)
     parser_base.add_argument("--max_checkpoint",        type=int, default=1)
@@ -108,6 +111,7 @@ def parse_args():
     # Hyperparameters
     parser_base.add_argument("--batch_max_len",         type=int, default=81920)
     parser_base.add_argument("--epochs",                type=int,   default=5)
+    parser_base.add_argument("--max_steps",             type=int,   default=0)
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
     parser_base.add_argument("--use_zero_one_opt",      action='store_true')
@@ -361,6 +365,7 @@ def train(args: TrainingArguments):
     # Data Loader
     train_loader      = create_distributed_dataloader(args, train_dataset)
     train_total_steps = args.epochs * train_loader.num_batches()
+    train_total_steps = min(train_total_steps, args.max_steps or train_total_steps)
 
     eval_loader = None
     if eval_dataset is not None:
@@ -470,6 +475,26 @@ def train(args: TrainingArguments):
 
                     clean_checkpoint(args)
 
+            if (args.save_strategy == 'step' and args.save_every and (step % args.save_every == 0)):
+                dist.barrier()
+
+                if model_engine.zero_optimization_stage() == 3:
+                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
+                elif RANK == 0:
+                    state_dict = deepspeed.checkpoint.utils.clone_tensors_for_torch_save(model_engine.module.state_dict())
+
+                if RANK == 0:
+                    save_path = os.path.join(args.save_path, f"st_{step}")
+
+                    model_engine.module.save_pretrained(save_path,
+                                                        state_dict=state_dict)  # type: ignore
+
+                    # Also save tokenizer from base model
+                    save_tokenizer(args, save_path)
+
+                    # Write metadata
+                    save_openchat_metadata(args, args.epochs * step / train_total_steps, step, save_path)
+
         if step > latest_checkpoint:
 
             # Log batch efficiency
@@ -510,7 +535,7 @@ def train(args: TrainingArguments):
             ############ Save Checkpoint
             # Save model with lean state dict
             # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
-            if (epoch + 1 == args.epochs) or (args.save_every and ((epoch + 1) % args.save_every == 0)):
+            if (step == train_total_steps) or (epoch + 1 == args.epochs) or (args.save_strategy == 'epoch' and args.save_every and ((epoch + 1) % args.save_every == 0)):
                 dist.barrier()
 
                 if model_engine.zero_optimization_stage() == 3:
