@@ -21,6 +21,7 @@ from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_t
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
+from ochat.training_deepspeed.train_ring_lora import train as train_ring
 
 from transformers.integrations import HfDeepSpeedConfig
 from transformers import BitsAndBytesConfig
@@ -104,6 +105,7 @@ def _find_multiple(a, b):
 
 def parse_args():
     parser_base = argparse.ArgumentParser()
+    parser_ring_confirm = argparse.ArgumentParser(add_help=False)
     # Distributed
     parser_base.add_argument("--local_rank",            type=int, required=True)
 
@@ -140,6 +142,9 @@ def parse_args():
     parser_base.add_argument("--experiment_name",       type=str, required=True)
     parser_base.add_argument("--run_name",              type=str, required=True)
 
+    # RING
+    parser_ring_confirm.add_argument("--use_ring",      action='store_true')
+
     # LORA
     parser_base.add_argument("--lora_alpha",            type=int, default=32)
     parser_base.add_argument("--lora_r",                type=int, default=32)
@@ -157,9 +162,14 @@ def parse_args():
     # DeepSpeed parameters
     parser_base = deepspeed.add_config_arguments(parser_base)
 
+    # Group parser
+    parser_group = argparse.ArgumentParser(parents=[parser_base, parser_ring_confirm])
+
     # Parse known args
-    args_base = parser_base.parse_args()
-    return args_base
+    parser_group.parse_args()
+    args_base, _ = parser_base.parse_known_args()
+    args_ring_confirm, _ = parser_ring_confirm.parse_known_args()
+    return args_base, args_ring_confirm
 
 
 def create_dataset(args: TrainingArguments, split_name):
@@ -566,7 +576,7 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    args, args_ring_confirm = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config = json.load(f)
@@ -575,4 +585,7 @@ if __name__ == "__main__":
         args.ds_offload = True
         args.use_zero_one_opt = False
         args.use_qlora = False
-    train(args)
+    if args_ring_confirm.use_ring:
+        train_ring(args)
+    else:
+        train(args)
