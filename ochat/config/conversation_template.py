@@ -41,6 +41,9 @@ class ConversationTemplate(BaseModel):
     eot_tokens_: List[int]
     eos_tokens_: List[int]
 
+    class Config:
+        arbitrary_types_allowed = True
+
     def __init__(self, **data):
         tokenizer = data["tokenizer"]
         eot = data["eot"]
@@ -156,6 +159,9 @@ class ChatMLConversationTemplate(BaseModel):
 
     bos_tokens_: List[int]
     eos_tokens_: List[int]
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def __init__(self, **data):
         tokenizer = data["tokenizer"]

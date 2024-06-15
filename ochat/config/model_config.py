@@ -15,3 +15,6 @@ class ModelConfig(BaseModel):
 
     # conversation template
     conversation_template: Union[ConversationTemplate, ChatMLConversationTemplate]
+
+    class Config:
+        arbitrary_types_allowed = True
