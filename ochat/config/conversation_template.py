@@ -1,5 +1,5 @@
 from typing import Optional, Callable, Iterable, List
-from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizerBase
 
 from pydantic import BaseModel
 
@@ -28,7 +28,7 @@ class PretokenizedConversation(BaseModel):
 
 
 class ConversationTemplate(BaseModel):
-    tokenizer: PreTrainedTokenizer
+    tokenizer: PreTrainedTokenizerBase
 
     # Prompt
     role_prefix: Callable[..., str]
@@ -144,7 +144,7 @@ class ConversationTemplate(BaseModel):
         return result_tokens, result_weights
 
 class ChatMLConversationTemplate(BaseModel):
-    tokenizer: PreTrainedTokenizer
+    tokenizer: PreTrainedTokenizerBase
 
     model: str
 
