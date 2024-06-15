@@ -1,5 +1,5 @@
 from transformers.modeling_utils import PreTrainedModel
-from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils import PreTrainedTokenizerBase
 from functools import partial
 from typing import Callable, Union
 from .conversation_template import ConversationTemplate, ChatMLConversationTemplate
@@ -11,7 +11,7 @@ class ModelConfig(BaseModel):
 
     # Model
     model_max_context: int
-    model_tokenizer_create: Callable[..., PreTrainedTokenizer]
+    model_tokenizer_create: Callable[..., PreTrainedTokenizerBase]
     model_create_for_training: Callable[..., PreTrainedModel]
 
     # conversation template
