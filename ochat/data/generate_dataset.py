@@ -59,7 +59,7 @@ def truncate_trailing_zero_weighted(tokens: list, weights: list):
     return tokens[:non_zero_index + 1], weights[:non_zero_index + 1]
 
 
-def add_single_conv(output: dict, tokens: list, weights: list, args: DataArguments):
+def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArguments):
     # truncate trailing zero weighted tokens
     tokens, weights = truncate_trailing_zero_weighted(tokens, weights)
     if not tokens:
@@ -103,11 +103,10 @@ def add_single_conv(output: dict, tokens: list, weights: list, args: DataArgumen
     }
     results["num_seqs"] = sum(results["nz_shifted_loss_weights"])
 
-    for k, v in results.items():
-        output[k].append(v)
+    outputs.append(results)
 
 
-def convert_conversation_batch(job_id: int, batch: list, schema: pyarrow.Schema, args: DataArguments):
+def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation
 
     # Tokenization
@@ -140,7 +139,7 @@ def convert_conversation_batch(job_id: int, batch: list, schema: pyarrow.Schema,
     job_print (job_id, "Generating ...")
     max_context = args.max_seq_length or model_config.model_max_context
 
-    outputs = {k: [] for k in schema.names}
+    outputs = []
     for tokens, weights in zip(tokens_list, weights_list):
         assert len(tokens) == len(weights)
 
@@ -153,7 +152,7 @@ def convert_conversation_batch(job_id: int, batch: list, schema: pyarrow.Schema,
 
     job_print (job_id, "Chunk finish")
 
-    return pyarrow.Table.from_pydict(outputs, schema=schema)
+    return outputs
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
@@ -178,12 +177,18 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         handles = [executor.submit(convert_conversation_batch,
             job_id=job_id,
             batch=batch,
-            schema=schema,
             args=args
         ) for job_id, batch in enumerate(_split(conversations, executor._max_workers))]
 
     # write
-    parquet.write_table(pyarrow.concat_tables([handle.result() for handle in handles]), f"{args.out_prefix}.{split_name}.parquet")
+    outputs = []
+    for i,handle in enumerate(handles):
+        print (f'Collect result from job-{i} ...')
+        outputs.extend(handle.result())
+        print ('Collected')
+    print ('Write table to disk ...')
+    parquet.write_table(pyarrow.Table.form_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
+    print ('Write finish')
 
 
 def generate_dataset(args: DataArguments):
