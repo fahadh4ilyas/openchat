@@ -389,7 +389,7 @@ def train(args: TrainingArguments):
         if args.mlflow_username:
             os.environ['MLFLOW_TRACKING_USERNAME'] = args.mlflow_username
         if args.mlflow_password:
-            os.environ['MLFLOW_TRACKING_PASSWORD'] = args.mlflow_username
+            os.environ['MLFLOW_TRACKING_PASSWORD'] = args.mlflow_password
         mlflow.set_experiment(args.experiment_name)
         mlflow.start_run(run_name=args.run_name)
         metadata = vars(args).copy()
