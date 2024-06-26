@@ -187,7 +187,7 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         outputs.extend(handle.result())
         print ('Collected')
     print ('Write table to disk ...')
-    parquet.write_table(pyarrow.Table.form_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
+    parquet.write_table(pyarrow.Table.from_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
     print ('Write finish')
 
 
