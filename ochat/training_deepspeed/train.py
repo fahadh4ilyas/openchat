@@ -41,6 +41,8 @@ class TrainingArguments(BaseModel):
     save_strategy: Union[Literal['epoch'], Literal['step']] = Field('epoch')
     checkpoint_every: int = Field(0, ge=0)
     max_checkpoint: int = Field(1, gt=0)
+    eval_every: Optional[int] = Field(None, gt=0)
+    eval_strategy: Union[Literal['epoch'], Literal['step']] = Field('epoch')
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
     max_steps: int = Field(0)
@@ -109,6 +111,8 @@ def parse_args() -> Tuple[argparse.Namespace, argparse.Namespace, argparse.Names
     parser_base.add_argument("--save_every",            type=int, default=None)
     parser_base.add_argument("--checkpoint_every",      type=int, default=0)
     parser_base.add_argument("--max_checkpoint",        type=int, default=1)
+    parser_base.add_argument("--eval_strategy",         type=str, choices=['epoch', 'step'], default='epoch')
+    parser_base.add_argument("--eval_every",            type=int, default=None)
 
     # Hyperparameters
     parser_base.add_argument("--batch_max_len",         type=int, default=81920)
@@ -371,8 +375,11 @@ def train(args: TrainingArguments):
 
     # Data Loader
     train_loader      = create_distributed_dataloader(args, train_dataset)
-    train_total_steps = args.epochs * train_loader.num_batches()
-    train_total_steps = min(train_total_steps, args.max_steps or train_total_steps)
+    if args.max_steps > 0:
+        args.epochs = -(-args.max_steps // train_loader.num_batches())
+        train_total_steps = args.max_steps
+    else:
+        train_total_steps = args.epochs * train_loader.num_batches()
 
     eval_loader = None
     if eval_dataset is not None:
@@ -413,11 +420,10 @@ def train(args: TrainingArguments):
     step = 0
     latest_checkpoint = int((get_latest_checkpoint(args) or '_0').split('_')[-1])
     lr_this_step = None
+    model_engine.train()
+    eval_epoch = 0
     for epoch in range(args.epochs):
         print (f"[rank {RANK}]: Epoch {epoch}")
-
-        ############ Train Epoch
-        model_engine.train()
 
         train_loader.set_epoch(epoch)
         for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
@@ -478,6 +484,40 @@ def train(args: TrainingArguments):
                     save_openchat_metadata(args, epoch + 1, step, save_path)
 
                     clean_checkpoint(args)
+            
+            if eval_loader is not None and (args.eval_strategy == 'step' and args.eval_every and (step % args.eval_every == 0)):
+                model_engine.eval()
+
+                eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
+                eval_total_steps = 0
+
+                eval_loader.set_epoch(eval_epoch)
+                with torch.inference_mode():
+                    for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
+                        # To device
+                        batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
+
+                        # Eval
+                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+
+                        if isinstance(eval_loss, tuple):
+                            eval_loss, _ = eval_loss
+                        
+                        # Accumulate eval loss
+                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+                        eval_total_steps += 1
+
+                # Gather eval loss (reduce sum)
+                eval_total_metric.div_(eval_total_steps)
+                dist.reduce(eval_total_metric, 0)
+
+                eval_epoch += 1
+
+                if RANK == 0:
+                    eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                    mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+                
+                model_engine.train()
 
             if (args.save_strategy == 'step' and args.save_every and (step % args.save_every == 0)):
                 dist.barrier()
@@ -505,14 +545,13 @@ def train(args: TrainingArguments):
             if RANK == 0:
                 mlflow.log_metrics(metrics={"batch_efficiency": train_loader.efficiency()}, step=step)
 
-            ############ Eval Epoch
-            if eval_loader is not None:
+            if eval_loader is not None and ((step == train_total_steps) or (epoch + 1 == args.epochs) or (args.eval_strategy == 'epoch' and args.eval_every and ((epoch + 1) % args.eval_every == 0))):
                 model_engine.eval()
 
                 eval_total_metric = torch.zeros((2, ), dtype=torch.float32, device=args.device)
                 eval_total_steps = 0
 
-                eval_loader.set_epoch(epoch)
+                eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
                     for (batch_tensor, batch_info), all_numseq, cur_numseq in eval_loader:
                         # To device
@@ -532,9 +571,13 @@ def train(args: TrainingArguments):
                 eval_total_metric.div_(eval_total_steps)
                 dist.reduce(eval_total_metric, 0)
 
+                eval_epoch += 1
+
                 if RANK == 0:
                     eval_loss, eval_acc = eval_total_metric.cpu().numpy()
                     mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+                
+                model_engine.train()
 
             ############ Save Checkpoint
             # Save model with lean state dict
