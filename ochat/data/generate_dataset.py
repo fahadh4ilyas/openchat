@@ -185,7 +185,7 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         for handle in concurrent.futures.as_completed(handles):
             output, job_id = handle.result()
             outputs[job_id] = output
-            job_print (job_id, f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Collect result is done')
+            job_print (job_id, 'Collect result is done')
         outputs = [d for output in outputs for d in output]
 
     # write
