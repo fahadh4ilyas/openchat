@@ -7,7 +7,7 @@ Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokeni
 import concurrent.futures
 from typing import List, Optional
 import argparse
-import os
+from datetime import datetime
 import random
 
 from pydantic import BaseModel, Field
@@ -41,7 +41,7 @@ PAD_TOKEN_ID = 0
 
 
 def job_print(job_id: int, *args, **kwargs):
-    print (f'[JOB ID: {job_id}]', *args, **kwargs)
+    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] [JOB ID: {job_id}]', *args, **kwargs)
 
 
 def _split(a: list, n: int):
@@ -185,13 +185,13 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         for handle in concurrent.futures.as_completed(handles):
             output, job_id = handle.result()
             outputs[job_id] = output
-            print (f'Collect result from job-{job_id} is done')
+            job_print (job_id, f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Collect result is done')
         outputs = [d for output in outputs for d in output]
 
     # write
-    print ('Write table to disk ...')
+    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
     parquet.write_table(pyarrow.Table.from_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
-    print ('Write finish')
+    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
 
 
 def generate_dataset(args: DataArguments):
