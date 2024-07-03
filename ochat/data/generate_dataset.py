@@ -152,7 +152,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
 
     job_print (job_id, "Chunk finish")
 
-    return outputs
+    return outputs, job_id
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
@@ -180,12 +180,15 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
             args=args
         ) for job_id, batch in enumerate(_split(conversations, executor._max_workers))]
 
+        # Collecting
+        outputs = [None] * len(handles)
+        for handle in concurrent.futures.as_completed(handles):
+            output, job_id = handle.result()
+            outputs[job_id] = output
+            print (f'Collect result from job-{job_id} is done')
+        outputs = [d for output in outputs for d in output]
+
     # write
-    outputs = []
-    for i,handle in enumerate(handles):
-        print (f'Collect result from job-{i} ...')
-        outputs.extend(handle.result())
-        print ('Collected')
     print ('Write table to disk ...')
     parquet.write_table(pyarrow.Table.from_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
     print ('Write finish')
