@@ -136,6 +136,7 @@ class LlamaConfig(PretrainedConfig):
         rope_scaling=None,
         attention_bias=False,
         attention_dropout=0.0,
+        mlp_bias=False,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -160,6 +161,7 @@ class LlamaConfig(PretrainedConfig):
         self._rope_scaling_validation()
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
+        self.mlp_bias = mlp_bias
 
         super().__init__(
             pad_token_id=pad_token_id,
@@ -181,9 +183,9 @@ class LlamaConfig(PretrainedConfig):
                 "`rope_scaling` must be a dictionary, "
                 f"got {self.rope_scaling}"
             )
-        rope_scaling_type = self.rope_scaling.get("type", None)
+        rope_scaling_type = self.rope_scaling.get("type", None) or self.rope_scaling.get("rope_type", None)
         rope_scaling_factor = self.rope_scaling.get("factor", None)
-        if rope_scaling_type is None or rope_scaling_type not in ["linear", "dynamic", "yarn", "dynamic-yarn"]:
+        if rope_scaling_type is None or rope_scaling_type not in ["linear", "dynamic", "yarn", "dynamic-yarn", "llama3"]:
             raise ValueError(
                 f"`rope_scaling`'s name field must be one of ['linear', 'dynamic', 'yarn', 'dynamic-yarn'], got {rope_scaling_type}"
             )

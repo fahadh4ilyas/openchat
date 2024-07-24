@@ -128,6 +128,24 @@ MODEL_CONFIG_MAP = {
                                       inference_condition="GPT4")
     ),
 
+    "llama3.1": ModelConfig(
+        # Model
+        model_max_context=2**17,
+        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained,
+                                       use_fast=False),
+        model_create_for_training=partial(ochat.models.LlamaLongForCausalLM.from_pretrained,
+                                          torch_dtype=torch.bfloat16),
+
+        # Conversation Template
+        conversation_template=partial(ChatMLConversationTemplate,
+                                      model='llama',
+                                      role_prefix=_chatml_role_prefix,
+                                      prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
+                                      sep='\n\n',
+                                      conv_sep='',
+                                      inference_condition="GPT4")
+    ),
+
     "mistral": ModelConfig(
         # Model
         model_max_context=8192,

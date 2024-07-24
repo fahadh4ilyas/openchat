@@ -143,7 +143,18 @@ class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
 
 
 class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, scale=1, original_max_position_embeddings=2048, extrapolation_factor=1, attn_factor=1, beta_fast=32, beta_slow=1, finetuned=False, device=None):
+    def __init__(self,
+                 dim,
+                 max_position_embeddings=2048,
+                 base=10000,
+                 scale=1,
+                 original_max_position_embeddings=2048,
+                 extrapolation_factor=1,
+                 attn_factor=1,
+                 beta_fast=32,
+                 beta_slow=1,
+                 finetuned=False,
+                 device=None):
         super().__init__()
 
         self.dim = dim
@@ -185,18 +196,56 @@ class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-class UnpaddedLlamaMLP(nn.Module):
-    def __init__(
-        self,
-        hidden_size: int,
-        intermediate_size: int,
-        hidden_act: str,
-    ):
+class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
+    """LlamaRotaryEmbedding with Llama3 Scaling"""
+
+    def __init__(self,
+                 dim,
+                 max_position_embeddings=131072,
+                 base=10000,
+                 device=None,
+                 factor=8.0,
+                 low_freq_factor=1.0,
+                 high_freq_factor=4.0,
+                 original_max_position_embeddings=8192):
         super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.act_fn = ACT2FN[hidden_act]
+
+        # RoPE
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+        high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+        new_freqs = []
+        for freq in inv_freq:
+            wavelen = 2 * math.pi / freq
+            if wavelen < high_freq_wavelen:
+                new_freqs.append(freq)
+            elif wavelen > low_freq_wavelen:
+                new_freqs.append(freq / factor)
+            else:
+                assert low_freq_wavelen != high_freq_wavelen
+                smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
+                new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
+        inv_freq = torch.tensor(new_freqs, dtype=inv_freq.dtype, device=inv_freq.device)
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
+        freqs = torch.outer(t, inv_freq)
+
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        dtype = torch.get_default_dtype()
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self):
+        return self.cos_cached, self.sin_cached
+
+
+class UnpaddedLlamaMLP(nn.Module):
+    def __init__(self, config: LlamaConfig):
+        super().__init__()
+        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.mlp_bias)
+        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=config.mlp_bias)
+        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.mlp_bias)
+        self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
@@ -240,8 +289,8 @@ class UnpaddedLlamaAttention(nn.Module):
         # cu_seqlens:       [bs + 1]
 
         query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
+        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
+        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
@@ -270,11 +319,7 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
 
         self.hidden_size = config.hidden_size
         self.self_attn = UnpaddedLlamaAttention(config=config)
-        self.mlp = UnpaddedLlamaMLP(
-            hidden_size=self.hidden_size,
-            intermediate_size=config.intermediate_size,
-            hidden_act=config.hidden_act,
-        )
+        self.mlp = UnpaddedLlamaMLP(config=config)
         self.input_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -343,17 +388,26 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        if config.rope_scaling["type"] == "linear":
+        rope_scaling_type = config.rope_scaling.get("type", None) or config.rope_scaling.get("rope_type", None)
+        if rope_scaling_type == "linear":
             self.rotary_emb = UnpaddedLlamaLinearScalingRotaryEmbedding(config.hidden_size // config.num_attention_heads,
                                                                       max_position_embeddings=config.max_position_embeddings,
                                                                       base=config.rope_theta,
                                                                       scaling_factor=config.rope_scaling["factor"])
-        elif config.rope_scaling["type"] == "yarn":
+        elif rope_scaling_type == "yarn":
             self.rotary_emb   = UnpaddedLlamaYarnRotaryEmbedding(config.hidden_size // config.num_attention_heads,
                                                             max_position_embeddings=config.max_position_embeddings,
                                                             scale=config.rope_scaling["factor"],
                                                             original_max_position_embeddings=config.rope_scaling["original_max_position_embeddings"],
                                                             base=config.rope_theta)
+        elif rope_scaling_type == "llama3":
+            self.rotary_emb = UnpaddedLlama3RotaryEmbedding(config.hidden_size // config.num_attention_heads,
+                                                            max_position_embeddings=config.max_position_embeddings,
+                                                            factor=config.rope_scaling["factor"],
+                                                            low_freq_factor=config.rope_scaling["low_freq_factor"],
+                                                            high_freq_factor=config.rope_scaling["high_freq_factor"],
+                                                            original_max_position_embeddings=config.rope_scaling["original_max_position_embeddings"],
+                                                            base=config.rope_theta,)
 
         self.layers = nn.ModuleList([UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.norm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
