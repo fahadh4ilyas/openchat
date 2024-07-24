@@ -2,6 +2,7 @@ from ochat.models.unpadded_llama import LlamaForCausalLM
 from ochat.models.unpadded_llama_split import LlamaForCausalLM as LlamaSplitForCausalLM
 from ochat.models.unpadded_llama_long import LlamaForCausalLM as LlamaLongForCausalLM
 from ochat.models.unpadded_llama_ring import LlamaForCausalLM as LlamaRingForCausalLM
+from ochat.models.unpadded_llama_long_ring import LlamaForCausalLM as LlamaLongRingForCausalLM
 from ochat.models.unpadded_mistral import MistralForCausalLM
 from ochat.models.unpadded_mistral_split import MistralForCausalLM as MistralSplitForCausalLM
 from ochat.models.unpadded_mistral_long import MistralForCausalLM as MistralLongForCausalLM
