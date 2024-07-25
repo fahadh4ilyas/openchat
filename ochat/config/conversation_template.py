@@ -56,7 +56,7 @@ class ConversationTemplate(BaseModel):
     def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
         return self.tokenizer(strings, split_special_tokens=False, return_attention_mask=False, add_special_tokens=False).input_ids
 
-    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_eos_token: bool = False):
+    def tokenize_conversations(self, conversations: Iterable[Conversation], inference: bool = False, seq_level_weight: bool = False, force_eos_token: bool = False, eos_final: bool = False):
         # Pre-tokenize all conversations
         default_condition = self.inference_condition if inference else ""
 
@@ -130,7 +130,7 @@ class ConversationTemplate(BaseModel):
                 if not (inference and idx == last_idx):  # Do not add EOT on last turn during inference
                     tokens.extend(self.eot_tokens_)
                     weights.extend([w] * len(self.eot_tokens_))
-                    if self.eos_tokens_[0] != self.eot_tokens_[0] and force_eos_token:
+                    if self.eos_tokens_[0] != self.eot_tokens_[0] and (force_eos_token or eos_final):
                         tokens.extend(self.eos_tokens_)
                         weights.extend([w] * len(self.eos_tokens_))
 
