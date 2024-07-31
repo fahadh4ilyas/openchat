@@ -34,7 +34,6 @@ from .configuration_mistral_long import MistralConfig
 try:
     from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
-    from flash_attn.bert_padding import pad_input
 except ImportError:
     print("FlashAttention not found. Install it if you need to train models.")
 
