@@ -39,6 +39,7 @@ except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rms_layernorm import fast_rms_layernorm
+from ochat.kernel.rope import fast_rope_embedding
 
 
 logger = logging.get_logger(__name__)
@@ -97,10 +98,12 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor):
+def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    if fast_rope:
+        return fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
     cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
     sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -267,7 +270,8 @@ class UnpaddedMistralAttention(nn.Module):
         nz_hidden_states: torch.Tensor,
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int
+        max_seqlen: int,
+        use_fast_rope: bool = False
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
@@ -279,7 +283,7 @@ class UnpaddedMistralAttention(nn.Module):
 
         # RoPE
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
@@ -320,7 +324,8 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_norm: bool = False
+        use_fast_norm: bool = False,
+        use_fast_rope: bool = False
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
@@ -332,7 +337,8 @@ class UnpaddedMistralDecoderLayer(nn.Module):
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen
+            max_seqlen=max_seqlen,
+            use_fast_rope=use_fast_rope
         )
         nz_hidden_states = residual + nz_hidden_states
 
@@ -411,6 +417,7 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_norm: bool = False,
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
         cos_sin          = self.rotary_emb(max_seqlen)
@@ -426,7 +433,8 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
-                    use_fast_norm
+                    use_fast_norm,
+                    use_fast_rope
                 )
             else:
                 nz_hidden_states = decoder_layer(
@@ -436,7 +444,8 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
-                    use_fast_norm=use_fast_norm
+                    use_fast_norm=use_fast_norm,
+                    use_fast_rope=use_fast_rope
                 )
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
@@ -484,6 +493,7 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
         num_seq: int = 0,
         use_fast_norm: bool = False,
+        use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
@@ -492,6 +502,7 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
             use_fast_norm=use_fast_norm,
+            use_fast_rope=use_fast_rope,
         )
         logits = self.lm_head(hidden_states)
 

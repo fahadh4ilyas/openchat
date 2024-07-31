@@ -35,6 +35,8 @@ try:
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
 
+from ochat.kernel.rope import fast_rope_embedding
+
 
 logger = logging.get_logger(__name__)
 
@@ -56,10 +58,12 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor):
+def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    if fast_rope:
+        return fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
     cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
     sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
     q_embed = (q * cos) + (rotate_half(q) * sin)
@@ -195,8 +199,12 @@ class UnpaddedPhiAttention(nn.Module):
         nz_hidden_states: torch.Tensor,
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int
+        max_seqlen: int,
+        use_fast_rope: bool = False
     ) -> torch.Tensor:
+        # nz_hidden_states: [nnz, num_heads, head_dim]
+        # nz_position_ids:  [nnz]
+        # cu_seqlens:       [bs + 1]
 
         query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
         key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
@@ -217,7 +225,7 @@ class UnpaddedPhiAttention(nn.Module):
         )
         # [seq_length, num_heads, head_dim // config.partial_rotary_factor]
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_rot, key_rot, cos, sin, nz_position_ids)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
 
         # [seq_length, num_heads, head_dim]
         query_states = torch.cat((query_rot, query_pass), dim=-1)
@@ -255,7 +263,8 @@ class UnpaddedPhiDecoderLayer(nn.Module):
         nz_hidden_states: torch.Tensor,
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int
+        max_seqlen: int,
+        use_fast_rope: bool = False
     ) -> torch.Tensor:
 
         residual = nz_hidden_states
@@ -269,7 +278,8 @@ class UnpaddedPhiDecoderLayer(nn.Module):
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen
+            max_seqlen=max_seqlen,
+            use_fast_rope=use_fast_rope
         )
         attn_outputs = self.resid_dropout(attn_outputs)
 
@@ -345,6 +355,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
         nz_hidden_states = self.embed_dropout(nz_hidden_states)
@@ -360,7 +371,8 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
-                    max_seqlen
+                    max_seqlen,
+                    use_fast_rope
                 )
             else:
                 nz_hidden_states = decoder_layer(
@@ -369,7 +381,8 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
-                    max_seqlen=max_seqlen
+                    max_seqlen=max_seqlen,
+                    use_fast_rope=use_fast_rope
                 )
 
         nz_hidden_states = self.final_layernorm(nz_hidden_states)
@@ -426,13 +439,15 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
         nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
         num_seq: int = 0,
         use_fast_norm: bool = False,
+        use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
             nz_input_ids=nz_input_ids,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen
+            max_seqlen=max_seqlen,
+            use_fast_rope=use_fast_rope,
         )
         logits = self.lm_head(hidden_states)
 

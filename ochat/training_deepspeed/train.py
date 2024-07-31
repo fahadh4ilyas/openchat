@@ -57,6 +57,7 @@ class TrainingArguments(BaseModel):
     beta2: float = Field(0.95)
     eps: float = Field(1e-5)
     use_fast_norm: bool = Field(False)
+    use_fast_rope: bool = Field(False)
     tracking_uri: Optional[str] = Field(None)
     mlflow_username: Optional[str] = Field(None)
     mlflow_password: Optional[str] = Field(None)
@@ -136,6 +137,7 @@ def parse_args() -> Tuple[argparse.Namespace, argparse.Namespace, argparse.Names
 
     # FAST FORWARD
     parser_base.add_argument("--use_fast_norm",      action='store_true')
+    parser_base.add_argument("--use_fast_rope",      action='store_true')
 
     # MLFLOW
     parser_base.add_argument("--tracking_uri",          type=str, default=None)
@@ -443,7 +445,7 @@ def train(args: TrainingArguments):
             batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
             # Update
-            loss, acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq).loss
+            loss, acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq, use_fast_rope=args.use_fast_rope).loss
 
             if isinstance(loss, tuple):
                 loss, aux_loss = loss
@@ -502,7 +504,7 @@ def train(args: TrainingArguments):
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
-                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq, use_fast_norm=args.use_fast_norm).loss
+                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq, use_fast_norm=args.use_fast_norm, use_fast_rope=args.use_fast_rope).loss
 
                         if isinstance(eval_loss, tuple):
                             eval_loss, _ = eval_loss
@@ -562,7 +564,7 @@ def train(args: TrainingArguments):
                         batch_tensor = {k: (v.to(args.device) if v is not None else None) for k, v in batch_tensor.items()}
 
                         # Eval
-                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq, use_fast_norm=args.use_fast_norm).loss
+                        eval_loss, eval_acc = model_engine(**batch_tensor, **batch_info, num_seq=all_numseq, use_fast_norm=args.use_fast_norm, use_fast_rope=args.use_fast_rope).loss
 
                         if isinstance(eval_loss, tuple):
                             eval_loss, _ = eval_loss
