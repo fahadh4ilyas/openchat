@@ -36,7 +36,7 @@ try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
-    print ("FlashAttention not found. Install it if you need to train models.")
+    print("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rms_layernorm import fast_rms_layernorm
 from ochat.kernel.rope import fast_rope_embedding
@@ -46,17 +46,25 @@ logger = logging.get_logger(__name__)
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+def weighted_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
 # @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
+def weighted_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
+    return (
+        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
+    ).sum()
 
 
 @torch.jit.script  # type: ignore
-def rms_norm(hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float):
+def rms_norm(
+    hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
+):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
 
@@ -72,7 +80,14 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    fast_rope: bool = False,
+):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
@@ -106,16 +121,20 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
-
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
 
@@ -135,13 +154,18 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
 class UnpaddedLlamaMLP(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
-        self.gate_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.mlp_bias)
-        self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=config.mlp_bias)
-        self.up_proj = nn.Linear(config.hidden_size, config.intermediate_size, bias=config.mlp_bias)
+        self.gate_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
+        )
+        self.down_proj = nn.Linear(
+            config.intermediate_size, config.hidden_size, bias=config.mlp_bias
+        )
+        self.up_proj = nn.Linear(
+            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
+        )
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-
         if self.pretraining_tp > 1:
             slice = -(-self.intermediate_size // self.pretraining_tp)
             gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
@@ -149,17 +173,40 @@ class UnpaddedLlamaMLP(nn.Module):
             down_proj_slices = self.down_proj.weight.split(slice, dim=1)
 
             gate_proj = torch.cat(
-                [nn.functional.linear(x, gate_proj_slices[i]) for i in range(self.pretraining_tp)], dim=-1
+                [
+                    nn.functional.linear(x, gate_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ],
+                dim=-1,
             )
-            up_proj = torch.cat([nn.functional.linear(x, up_proj_slices[i]) for i in range(self.pretraining_tp)], dim=-1)
+            up_proj = torch.cat(
+                [
+                    nn.functional.linear(x, up_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ],
+                dim=-1,
+            )
 
-            intermediate_states = (self.act_fn(gate_proj) * up_proj).split(slice, dim=-1)
-            
-            return torch.stack([nn.functional.linear(intermediate_states[i], down_proj_slices[i]) for i in range(self.pretraining_tp)]).sum(dim=0)
- 
+            intermediate_states = (self.act_fn(gate_proj) * up_proj).split(
+                slice, dim=-1
+            )
+
+            return torch.stack(
+                [
+                    nn.functional.linear(intermediate_states[i], down_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ]
+            ).sum(dim=0)
+
         splitted_x = x.split(4096, dim=0)
 
-        return torch.cat([self.down_proj(self.act_fn(self.gate_proj(x_in)) * self.up_proj(x_in)) for x_in in splitted_x], dim=0)
+        return torch.cat(
+            [
+                self.down_proj(self.act_fn(self.gate_proj(x_in)) * self.up_proj(x_in))
+                for x_in in splitted_x
+            ],
+            dim=0,
+        )
 
 
 class UnpaddedLlamaAttention(nn.Module):
@@ -172,7 +219,11 @@ class UnpaddedLlamaAttention(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads if config.num_key_value_heads is not None else config.num_attention_heads
+        self.num_key_value_heads = (
+            config.num_key_value_heads
+            if config.num_key_value_heads is not None
+            else config.num_attention_heads
+        )
         self.attention_dropout = config.attention_dropout
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
@@ -181,10 +232,22 @@ class UnpaddedLlamaAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
+        )
 
     def forward(
         self,
@@ -194,7 +257,7 @@ class UnpaddedLlamaAttention(nn.Module):
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
@@ -202,41 +265,85 @@ class UnpaddedLlamaAttention(nn.Module):
 
         if self.config.pretraining_tp > 1:
             q_slice = -(-self.num_heads * self.head_dim // self.config.pretraining_tp)
-            kv_slice = -(-self.num_key_value_heads * self.head_dim // self.config.pretraining_tp)
+            kv_slice = -(
+                -self.num_key_value_heads * self.head_dim // self.config.pretraining_tp
+            )
             q_proj_slices = self.q_proj.weight.split(q_slice, dim=0)
             k_proj_slices = self.k_proj.weight.split(kv_slice, dim=0)
             v_proj_slices = self.v_proj.weight.split(kv_slice, dim=0)
 
             query_states = torch.cat(
-                [nn.functional.linear(nz_hidden_states, q_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
+                [
+                    nn.functional.linear(nz_hidden_states, q_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
             ).view(-1, self.num_heads, self.head_dim)
             key_states = torch.cat(
-                [nn.functional.linear(nz_hidden_states, k_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
+                [
+                    nn.functional.linear(nz_hidden_states, k_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
             ).view(-1, self.num_key_value_heads, self.head_dim)
             value_states = torch.cat(
-                [nn.functional.linear(nz_hidden_states, v_proj_slices[i]) for i in range(self.config.pretraining_tp)], dim=-1
+                [
+                    nn.functional.linear(nz_hidden_states, v_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
             ).view(-1, self.num_key_value_heads, self.head_dim)
         else:
             splitted_nz_hidden_states = nz_hidden_states.split(4096, dim=0)
-            query_states = torch.cat([self.q_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_heads, self.head_dim)
-            key_states = torch.cat([self.k_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_key_value_heads, self.head_dim)
-            value_states = torch.cat([self.v_proj(nz_hidden_states_in) for nz_hidden_states_in in splitted_nz_hidden_states], dim=0).view(-1, self.num_key_value_heads, self.head_dim)
+            query_states = torch.cat(
+                [
+                    self.q_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_heads, self.head_dim)
+            key_states = torch.cat(
+                [
+                    self.k_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
+            value_states = torch.cat(
+                [
+                    self.v_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
-                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
         else:
             attn_output = flash_attn_varlen_func(
-                q=query_states, k=key_states, v=value_states,
-                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                q=query_states,
+                k=key_states,
+                v=value_states,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
@@ -246,10 +353,18 @@ class UnpaddedLlamaAttention(nn.Module):
             attn_output_slice = attn_output.split(slice, dim=-1)
             o_proj_slices = self.o_proj.weight.split(slice, dim=1)
 
-            return torch.stack([nn.functional.linear(attn_output_slice[i], o_proj_slices[i]) for i in range(self.config.pretraining_tp)]).sum(dim=0)
+            return torch.stack(
+                [
+                    nn.functional.linear(attn_output_slice[i], o_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ]
+            ).sum(dim=0)
 
         splitted_attn_output = attn_output.split(4096, dim=0)
-        return torch.cat([self.o_proj(attn_output_in) for attn_output_in in splitted_attn_output], dim=0)
+        return torch.cat(
+            [self.o_proj(attn_output_in) for attn_output_in in splitted_attn_output],
+            dim=0,
+        )
 
 
 class UnpaddedLlamaDecoderLayer(nn.Module):
@@ -259,8 +374,12 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.self_attn = UnpaddedLlamaAttention(config=config)
         self.mlp = UnpaddedLlamaMLP(config=config)
-        self.input_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = UnpaddedLlamaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = UnpaddedLlamaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -271,7 +390,7 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_norm: bool = False,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
@@ -279,19 +398,20 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
-
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            use_fast_rope=use_fast_rope
+            use_fast_rope=use_fast_rope,
         )
         nz_hidden_states = residual + nz_hidden_states
 
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
+        nz_hidden_states = self.post_attention_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -329,12 +449,18 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedLlamaRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                         max_position_embeddings=2048,
-                                                         base=config.rope_theta)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
+        self.rotary_emb = UnpaddedLlamaRotaryEmbedding(
+            config.hidden_size // config.num_attention_heads,
+            max_position_embeddings=2048,
+            base=config.rope_theta,
+        )
 
-        self.layers = nn.ModuleList([UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
         self.norm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -358,7 +484,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
-        cos_sin          = self.rotary_emb(max_seqlen)
+        cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -366,24 +492,22 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
                 nz_hidden_states = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
                     use_fast_norm,
-                    use_fast_rope
+                    use_fast_rope,
                 )
             else:
                 nz_hidden_states = decoder_layer(
                     cos_sin=cos_sin,
-                    
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                     use_fast_norm=use_fast_norm,
-                    use_fast_rope=use_fast_rope
+                    use_fast_rope=use_fast_rope,
                 )
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
@@ -393,7 +517,9 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
 
 class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
     # Ignore rotary emb inv_freq on load, as they will be calculated on creation
-    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"]
+    _keys_to_ignore_on_load_unexpected = [
+        r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"
+    ]
 
     def __init__(self, config):
         super().__init__(config)
@@ -421,7 +547,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
 
     def get_decoder(self):
         return self.model
-    
+
     def forward(
         self,
         # Unpadded inputs
@@ -452,13 +578,31 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
             assert nz_shifted_loss_weights is not None
 
             if num_seq > 0:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, acc
+                acc = (
+                    weighted_token_accuracy(
+                        logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq,
+                    acc,
+                )
             else:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), acc
+                acc = weighted_token_accuracy(
+                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    ),
+                    acc,
+                )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=logits
+            logits=logits,
         )

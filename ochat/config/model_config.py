@@ -8,14 +8,15 @@ from pydantic import BaseModel
 
 
 class ModelConfig(BaseModel):
-
     # Model
     model_max_context: int
     model_tokenizer_create: Callable[..., PreTrainedTokenizerBase]
     model_create_for_training: Callable[..., PreTrainedModel]
 
     # conversation template
-    conversation_template: Union[partial[ConversationTemplate], partial[ChatMLConversationTemplate]]
+    conversation_template: Union[
+        partial[ConversationTemplate], partial[ChatMLConversationTemplate]
+    ]
 
     class Config:
         arbitrary_types_allowed = True

@@ -19,7 +19,6 @@ from pyarrow import parquet
 
 
 class DataArguments(BaseModel):
-
     model_path: str = Field(...)
     model_type: str = Field(...)
     in_files: List[str] = Field(...)
@@ -41,14 +40,18 @@ PAD_TOKEN_ID = 0
 
 
 def job_print(job_id: int, *args, **kwargs):
-    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] [JOB ID: {job_id}]', *args, **kwargs)
+    print(
+        f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] [JOB ID: {job_id}]',
+        *args,
+        **kwargs,
+    )
 
 
 def _split(a: list, n: int):
     # Split list a to n chunks
     # https://stackoverflow.com/questions/2130016/splitting-a-list-into-n-parts-of-approximately-equal-length
     k, m = divmod(len(a), n)
-    return [a[i*k+min(i, m): (i+1)*k+min(i+1, m)] for i in range(n)]
+    return [a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
 def truncate_trailing_zero_weighted(tokens: list, weights: list):
@@ -56,7 +59,7 @@ def truncate_trailing_zero_weighted(tokens: list, weights: list):
     while non_zero_index >= 0 and weights[non_zero_index] == 0:
         non_zero_index -= 1
 
-    return tokens[:non_zero_index + 1], weights[:non_zero_index + 1]
+    return tokens[: non_zero_index + 1], weights[: non_zero_index + 1]
 
 
 def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArguments):
@@ -66,7 +69,9 @@ def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArgume
         return
 
     # labels
-    LABEL_PAD_TOKEN_ID = args.ignore_index if args.ignore_index != PAD_TOKEN_ID else PAD_TOKEN_ID
+    LABEL_PAD_TOKEN_ID = (
+        args.ignore_index if args.ignore_index != PAD_TOKEN_ID else PAD_TOKEN_ID
+    )
     labels = [(t if w != 0 else LABEL_PAD_TOKEN_ID) for t, w in zip(tokens, weights)]
 
     # Shift data
@@ -83,7 +88,10 @@ def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArgume
         weights = weights + [0.0]
 
     # Pad data
-    addition = -(-length // args.data_length_multiple_of) * args.data_length_multiple_of - length
+    addition = (
+        -(-length // args.data_length_multiple_of) * args.data_length_multiple_of
+        - length
+    )
     if addition > 0:
         tokens.extend(last_token + [PAD_TOKEN_ID] * (addition - 1))
         weights.extend([0.0] * addition)
@@ -93,13 +101,11 @@ def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArgume
     # populate results
     results = {
         "total_length": length,
-
         "seqlens": [length],
         "nz_input_ids": tokens,
         "nz_position_ids": list(range(length)),
-
-        "nz_shifted_label_ids":    labels,
-        "nz_shifted_loss_weights": weights
+        "nz_shifted_label_ids": labels,
+        "nz_shifted_loss_weights": weights,
     }
     results["num_seqs"] = sum(results["nz_shifted_loss_weights"])
 
@@ -115,16 +121,18 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     conv_template = model_config.conversation_template(tokenizer=tokenizer)
 
     # Decode data
-    job_print (job_id, "Decoding JSON ...")
+    job_print(job_id, "Decoding JSON ...")
     if args.pretokenized_in_files:
-        batch = [PretokenizedConversation(**orjson.loads(json_line)) for json_line in batch]
+        batch = [
+            PretokenizedConversation(**orjson.loads(json_line)) for json_line in batch
+        ]
         tokens_list = [b.input_ids for b in batch]
         weights_list = [b.loss_weights for b in batch]
     else:
         batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
 
         # Tokenize
-        job_print (job_id, "Tokenizing ...")
+        job_print(job_id, "Tokenizing ...")
         tokens_list = []
         weights_list = []
         if len(batch) > 0:
@@ -133,10 +141,11 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
                 inference=False,
                 seq_level_weight=args.per_sequence_loss,
                 force_eos_token=args.force_eos_token,
-                eos_final=args.eos_final)
+                eos_final=args.eos_final,
+            )
 
     # Generate data
-    job_print (job_id, "Generating ...")
+    job_print(job_id, "Generating ...")
     max_context = args.max_seq_length or model_config.model_max_context
 
     outputs = []
@@ -144,54 +153,57 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         assert len(tokens) == len(weights)
 
         # Truncate to specified tokens
-        tokens  = tokens[:max_context]
+        tokens = tokens[:max_context]
         weights = weights[:max_context]
 
         # Add to results
         add_single_conv(outputs, tokens, weights, args)
 
-    job_print (job_id, "Chunk finish")
+    job_print(job_id, "Chunk finish")
 
     return outputs, job_id
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
     # schema
-    metadata = {
-        "model_type": args.model_type
-    }
+    metadata = {"model_type": args.model_type}
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
         pyarrow.field("num_seqs", pyarrow.float32()),
-
         pyarrow.field(f"seqlens", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_input_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_position_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_shifted_label_ids", pyarrow.list_(pyarrow.int32())),
-        pyarrow.field(f"nz_shifted_loss_weights", pyarrow.list_(pyarrow.float32()))
+        pyarrow.field(f"nz_shifted_loss_weights", pyarrow.list_(pyarrow.float32())),
     ]
 
     schema = pyarrow.schema(schema, metadata={"metadata_json": orjson.dumps(metadata)})
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
-        handles = [executor.submit(convert_conversation_batch,
-            job_id=job_id,
-            batch=batch,
-            args=args
-        ) for job_id, batch in enumerate(_split(conversations, executor._max_workers))]
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=args.max_workers
+    ) as executor:
+        handles = [
+            executor.submit(
+                convert_conversation_batch, job_id=job_id, batch=batch, args=args
+            )
+            for job_id, batch in enumerate(_split(conversations, executor._max_workers))
+        ]
 
         # Collecting
         outputs = [None] * len(handles)
         for handle in concurrent.futures.as_completed(handles):
             output, job_id = handle.result()
             outputs[job_id] = output
-            job_print (job_id, 'Collect result is done')
+            job_print(job_id, "Collect result is done")
         outputs = [d for output in outputs for d in output]
 
     # write
-    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
-    parquet.write_table(pyarrow.Table.from_pylist(outputs, schema=schema), f"{args.out_prefix}.{split_name}.parquet")
-    print (f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
+    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
+    parquet.write_table(
+        pyarrow.Table.from_pylist(outputs, schema=schema),
+        f"{args.out_prefix}.{split_name}.parquet",
+    )
+    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
 
 
 def generate_dataset(args: DataArguments):
@@ -207,7 +219,7 @@ def generate_dataset(args: DataArguments):
     eval_num = int(args.eval_ratio * len(conversations))
 
     train_conversations = conversations[eval_num:]
-    eval_conversations  = conversations[:eval_num]
+    eval_conversations = conversations[:eval_num]
 
     generate_split(train_conversations, "train", args)
     if eval_num > 0:

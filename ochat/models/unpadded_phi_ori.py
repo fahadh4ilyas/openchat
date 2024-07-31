@@ -33,7 +33,7 @@ try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
-    print ("FlashAttention not found. Install it if you need to train models.")
+    print("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rope import fast_rope_embedding
 
@@ -42,13 +42,19 @@ logger = logging.get_logger(__name__)
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+def weighted_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
 # @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
+def weighted_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
+    return (
+        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
+    ).sum()
 
 
 def rotate_half(x: torch.Tensor):
@@ -58,7 +64,14 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    fast_rope: bool = False,
+):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
@@ -79,17 +92,27 @@ class UnpaddedPhiRotaryEmbedding(nn.Module):
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=device).float() / self.dim))
+        inv_freq = 1.0 / (
+            self.base
+            ** (
+                torch.arange(0, self.dim, 2, dtype=torch.int64, device=device).float()
+                / self.dim
+            )
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
         # Build here to make `torch.jit.trace` work.
         self._set_cos_sin_cache(
-            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+            seq_len=max_position_embeddings,
+            device=self.inv_freq.device,
+            dtype=torch.get_default_dtype(),
         )
 
     def _set_cos_sin_cache(self, seq_len, device, dtype):
         self.max_seq_len_cached = seq_len
-        t = torch.arange(self.max_seq_len_cached, dtype=torch.int64, device=device).type_as(self.inv_freq)
+        t = torch.arange(
+            self.max_seq_len_cached, dtype=torch.int64, device=device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
@@ -101,7 +124,9 @@ class UnpaddedPhiRotaryEmbedding(nn.Module):
         if max_position_embeddings > self.max_seq_len_cached:
             max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
             self._set_cos_sin_cache(
-                seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+                seq_len=max_position_embeddings,
+                device=self.inv_freq.device,
+                dtype=torch.get_default_dtype(),
             )
         return self.cos_cached, self.sin_cached
 
@@ -109,21 +134,32 @@ class UnpaddedPhiRotaryEmbedding(nn.Module):
 class UnpaddedPhiLinearScalingRotaryEmbedding(torch.nn.Module):
     """PhiRotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
 
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None, scaling_factor=1.0):
+    def __init__(
+        self,
+        dim,
+        max_position_embeddings=2048,
+        base=10000,
+        device=None,
+        scaling_factor=1.0,
+    ):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.scaling_factor = scaling_factor
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
-
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
         t = t / self.scaling_factor
         freqs = torch.outer(t, self.inv_freq)
 
@@ -175,18 +211,30 @@ class UnpaddedPhiAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=True)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True)
-        self.dense = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=True)
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
+        )
+        self.dense = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=True
+        )
 
         self.qk_layernorm = config.qk_layernorm
         if self.qk_layernorm:
             self.q_layernorm = nn.LayerNorm(
-                config.hidden_size // self.num_heads, eps=config.layer_norm_eps, elementwise_affine=True
+                config.hidden_size // self.num_heads,
+                eps=config.layer_norm_eps,
+                elementwise_affine=True,
             )
             self.k_layernorm = nn.LayerNorm(
-                config.hidden_size // self.num_heads, eps=config.layer_norm_eps, elementwise_affine=True
+                config.hidden_size // self.num_heads,
+                eps=config.layer_norm_eps,
+                elementwise_affine=True,
             )
 
     # Phi-2 has an attention overflow issue (with FP16) and requires autocast to be disabled
@@ -200,15 +248,21 @@ class UnpaddedPhiAttention(nn.Module):
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(nz_hidden_states).view(
+            -1, self.num_heads, self.head_dim
+        )
+        key_states = self.k_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
+        value_states = self.v_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
 
         if self.qk_layernorm:
             query_states = self.q_layernorm(query_states)
@@ -225,7 +279,9 @@ class UnpaddedPhiAttention(nn.Module):
         )
         # [seq_length, num_heads, head_dim // config.partial_rotary_factor]
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
 
         # [seq_length, num_heads, head_dim]
         query_states = torch.cat((query_rot, query_pass), dim=-1)
@@ -233,16 +289,24 @@ class UnpaddedPhiAttention(nn.Module):
 
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
-                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
-
-                dropout_p=self.attention_dropout, causal=True)
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout,
+                causal=True,
+            )
         else:
             attn_output = flash_attn_varlen_func(
-                q=query_states, k=key_states, v=value_states,
-                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-
-                dropout_p=self.attention_dropout, causal=True)
+                q=query_states,
+                k=key_states,
+                v=value_states,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                dropout_p=self.attention_dropout,
+                causal=True,
+            )
 
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
         return self.dense(attn_output)
@@ -253,7 +317,9 @@ class UnpaddedPhiDecoderLayer(nn.Module):
         super().__init__()
         self.self_attn = UnpaddedPhiAttention(config)
         self.mlp = UnpaddedPhiMLP(config)
-        self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.input_layernorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
 
     def forward(
@@ -264,9 +330,8 @@ class UnpaddedPhiDecoderLayer(nn.Module):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
-
         residual = nz_hidden_states
 
         nz_hidden_states = self.input_layernorm(nz_hidden_states)
@@ -274,12 +339,11 @@ class UnpaddedPhiDecoderLayer(nn.Module):
         # Self Attention
         attn_outputs = self.self_attn(
             cos_sin=cos_sin,
-
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            use_fast_rope=use_fast_rope
+            use_fast_rope=use_fast_rope,
         )
         attn_outputs = self.resid_dropout(attn_outputs)
 
@@ -322,21 +386,37 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
         self.vocab_size = config.vocab_size
         self.partial_rotary_factor = config.partial_rotary_factor
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
         self.embed_dropout = nn.Dropout(config.embd_pdrop)
         if config.rope_scaling is None:
-            self.rotary_emb   = UnpaddedPhiRotaryEmbedding(int(self.partial_rotary_factor * config.hidden_size // config.num_attention_heads),
-                                                            max_position_embeddings=config.max_position_embeddings,
-                                                            base=config.rope_theta)
+            self.rotary_emb = UnpaddedPhiRotaryEmbedding(
+                int(
+                    self.partial_rotary_factor
+                    * config.hidden_size
+                    // config.num_attention_heads
+                ),
+                max_position_embeddings=config.max_position_embeddings,
+                base=config.rope_theta,
+            )
         elif config.rope_scaling["type"] == "linear":
-            self.rotary_emb = UnpaddedPhiLinearScalingRotaryEmbedding(int(self.partial_rotary_factor * config.hidden_size // config.num_attention_heads),
-                                                                      max_position_embeddings=config.max_position_embeddings,
-                                                                      base=config.rope_theta,
-                                                                      scaling_factor=config.rope_scaling["factor"])
+            self.rotary_emb = UnpaddedPhiLinearScalingRotaryEmbedding(
+                int(
+                    self.partial_rotary_factor
+                    * config.hidden_size
+                    // config.num_attention_heads
+                ),
+                max_position_embeddings=config.max_position_embeddings,
+                base=config.rope_theta,
+                scaling_factor=config.rope_scaling["factor"],
+            )
         self.layers = nn.ModuleList(
             [UnpaddedPhiDecoderLayer(config) for _ in range(config.num_hidden_layers)]
         )
-        self.final_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.final_layernorm = nn.LayerNorm(
+            config.hidden_size, eps=config.layer_norm_eps
+        )
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -359,7 +439,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
         nz_hidden_states = self.embed_dropout(nz_hidden_states)
-        cos_sin          = self.rotary_emb(max_seqlen)
+        cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -367,22 +447,20 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                 nz_hidden_states = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
-                    use_fast_rope
+                    use_fast_rope,
                 )
             else:
                 nz_hidden_states = decoder_layer(
                     cos_sin=cos_sin,
-                    
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
-                    use_fast_rope=use_fast_rope
+                    use_fast_rope=use_fast_rope,
                 )
 
         nz_hidden_states = self.final_layernorm(nz_hidden_states)
@@ -436,7 +514,7 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
         max_seqlen: int,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
+        nz_shifted_loss_weights: Optional[torch.Tensor] = None,
         num_seq: int = 0,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
@@ -456,13 +534,31 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
             assert nz_shifted_loss_weights is not None
 
             if num_seq > 0:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq, acc
+                acc = (
+                    weighted_token_accuracy(
+                        logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq,
+                    acc,
+                )
             else:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
-                loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights), acc
+                acc = weighted_token_accuracy(
+                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    ),
+                    acc,
+                )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=logits
+            logits=logits,
         )

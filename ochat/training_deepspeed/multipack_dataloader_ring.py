@@ -15,7 +15,7 @@ def ffd_check(a: np.ndarray, c: int, n: int):
     # https://en.wikipedia.org/wiki/First-fit-decreasing_bin_packing
 
     a = np.sort(a)[::-1]
-    bins = np.full((n, ), c, dtype=a.dtype)
+    bins = np.full((n,), c, dtype=a.dtype)
     for size in a:
         not_found = True
         for idx in range(n):
@@ -56,7 +56,9 @@ def ffd_with_result(a: np.ndarray, c: int, start_index: int) -> List[List[int]]:
 
 
 @numba.njit
-def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int) -> Tuple[List[List[int]], int, int]:
+def allocate(
+    lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int
+) -> Tuple[List[List[int]], int, int]:
     # Dynamic batch allocator, similar to Multifit
     # https://en.wikipedia.org/wiki/Multifit_algorithm
     # ~99.5% efficiency on OpenChat training set (12 * 2048 ctx len)
@@ -74,13 +76,13 @@ def allocate(lengths: np.ndarray, lengths_cumsum: np.ndarray, c: int) -> Tuple[L
 
         while r - l > 1:
             m = (l + r) // 2
-            if ffd_check(lengths[start_index: start_index + m], c, n):
+            if ffd_check(lengths[start_index : start_index + m], c, n):
                 l = m
             else:
                 r = m
 
         # use length l
-        batch = ffd_with_result(lengths[start_index: start_index + l], c, start_index)  # type: ignore
+        batch = ffd_with_result(lengths[start_index : start_index + l], c, start_index)  # type: ignore
         if len(batch) < n:
             break
 
@@ -103,19 +105,18 @@ def extract_local(value: np.ndarray, rank: int, world_size: int):
 
 class MultipackDistributedDataloader:
     """Unpadded data loading using Multipack.
-       Approximate (at most ~1.22x) the optimal solution of the identical-machines scheduling problem, which is NP-hard."""
-    
+    Approximate (at most ~1.22x) the optimal solution of the identical-machines scheduling problem, which is NP-hard."""
+
     def __init__(
         self,
         dataset: Any,
         lengths: np.ndarray,
-
         batch_max_length: int,
-        collate_fn: Callable[[Dict[str, np.ndarray]], Tuple[Dict[str, torch.Tensor], Dict[str, Number]]],
-
+        collate_fn: Callable[
+            [Dict[str, np.ndarray]], Tuple[Dict[str, torch.Tensor], Dict[str, Number]]
+        ],
         num_replicas: Optional[int] = None,
         rank: Optional[int] = None,
-
         seed: int = 0,
     ):
         # Dataset
@@ -153,16 +154,18 @@ class MultipackDistributedDataloader:
         self.epoch = epoch
 
     def generate_batches(self, set_stats=False) -> List[List[int]]:
-        indices = np.random.default_rng(seed=self.seed + self.epoch).permutation(len(self.lengths))
+        indices = np.random.default_rng(seed=self.seed + self.epoch).permutation(
+            len(self.lengths)
+        )
 
-        lengths        = self.lengths[indices]
+        lengths = self.lengths[indices]
         lengths_cumsum = np.cumsum(lengths)
 
-        batches, total_used, total_slots = allocate(lengths=lengths,
-                                                    lengths_cumsum=lengths_cumsum,
-                                                    c=self.batch_max_length)
-        
-        batched_indices = [indices[batch]         for batch in batches]
+        batches, total_used, total_slots = allocate(
+            lengths=lengths, lengths_cumsum=lengths_cumsum, c=self.batch_max_length
+        )
+
+        batched_indices = [indices[batch] for batch in batches]
 
         # statistics
         if set_stats:
@@ -170,16 +173,22 @@ class MultipackDistributedDataloader:
             self.eff_total_slots += total_slots
 
         return batched_indices
-    
+
     def prepare_dataset(self, dataset: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        dataset["seqlens"] = dataset["seqlens"] // self.num_replicas
 
-        dataset['seqlens'] = dataset['seqlens'] // self.num_replicas
-
-        keys = ["nz_input_ids", "nz_position_ids", "nz_shifted_label_ids", "nz_shifted_loss_weights"]
+        keys = [
+            "nz_input_ids",
+            "nz_position_ids",
+            "nz_shifted_label_ids",
+            "nz_shifted_loss_weights",
+        ]
 
         for k in keys:
             for i in range(len(dataset[k])):
-                dataset[k][i] = extract_local(dataset[k][i], self.rank, self.num_replicas)
+                dataset[k][i] = extract_local(
+                    dataset[k][i], self.rank, self.num_replicas
+                )
 
         return dataset
 
@@ -188,7 +197,7 @@ class MultipackDistributedDataloader:
 
         for indices in all_indices:
             dataset = self.dataset[indices]
-            total_seqs: float = dataset['num_seqs'].sum()
+            total_seqs: float = dataset["num_seqs"].sum()
             dataset = self.prepare_dataset(dataset)
             yield self.collate_fn(dataset), total_seqs
 

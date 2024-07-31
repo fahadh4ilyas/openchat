@@ -36,7 +36,7 @@ try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
-    print ("FlashAttention not found. Install it if you need to train models.")
+    print("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rms_layernorm import fast_rms_layernorm
 from ochat.kernel.rope import fast_rope_embedding
@@ -44,17 +44,32 @@ from ochat.kernel.rope import fast_rope_embedding
 
 logger = logging.get_logger(__name__)
 
+
 # @torch.jit.script
-def lm_head_with_loss(embed_weights: torch.Tensor, hidden_states: torch.Tensor, nz_shifted_label_ids: torch.Tensor, nz_shifted_loss_weights: torch.Tensor, num_seq: int):
+def lm_head_with_loss(
+    embed_weights: torch.Tensor,
+    hidden_states: torch.Tensor,
+    nz_shifted_label_ids: torch.Tensor,
+    nz_shifted_loss_weights: torch.Tensor,
+    num_seq: int,
+):
     logits = nn.functional.linear(hidden_states, embed_weights)
 
-    token_accuracy = (nz_shifted_loss_weights * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)).sum() / num_seq
-    loss = (nz_shifted_loss_weights * cross_entropy_loss(logits, nz_shifted_label_ids, inplace_backward = True)[0]).sum() / num_seq
+    token_accuracy = (
+        nz_shifted_loss_weights
+        * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)
+    ).sum() / num_seq
+    loss = (
+        nz_shifted_loss_weights
+        * cross_entropy_loss(logits, nz_shifted_label_ids, inplace_backward=True)[0]
+    ).sum() / num_seq
     return (loss, token_accuracy), logits
 
 
 @torch.jit.script  # type: ignore
-def rms_norm(hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float):
+def rms_norm(
+    hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
+):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
 
@@ -70,7 +85,14 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    fast_rope: bool = False,
+):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
@@ -104,16 +126,20 @@ class UnpaddedGemmaRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
-
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
 
@@ -160,10 +186,22 @@ class UnpaddedGemmaAttention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.attention_dropout = config.attention_dropout
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias)
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=config.attention_bias,
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
+        )
 
     def forward(
         self,
@@ -173,33 +211,51 @@ class UnpaddedGemmaAttention(nn.Module):
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(nz_hidden_states).view(
+            -1, self.num_heads, self.head_dim
+        )
+        key_states = self.k_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
+        value_states = self.v_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
 
         # RoPE
         cos, sin = cos_sin
         cos = cos.to(value_states.dtype)
         sin = sin.to(value_states.dtype)
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
-                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
         else:
             attn_output = flash_attn_varlen_func(
-                q=query_states, k=key_states, v=value_states,
-                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                q=query_states,
+                k=key_states,
+                v=value_states,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.num_heads * self.head_dim)  # type: ignore
@@ -217,8 +273,12 @@ class UnpaddedGemmaDecoderLayer(nn.Module):
             intermediate_size=config.intermediate_size,
             hidden_act=config.hidden_act,
         )
-        self.input_layernorm = UnpaddedGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = UnpaddedGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = UnpaddedGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = UnpaddedGemmaRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -229,7 +289,7 @@ class UnpaddedGemmaDecoderLayer(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_norm: bool = False,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
@@ -237,19 +297,20 @@ class UnpaddedGemmaDecoderLayer(nn.Module):
         nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
-
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            use_fast_rope=use_fast_rope
+            use_fast_rope=use_fast_rope,
         )
         nz_hidden_states = residual + nz_hidden_states
 
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
+        nz_hidden_states = self.post_attention_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -286,14 +347,18 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.normalization_factor = config.hidden_size ** 0.5
+        self.normalization_factor = config.hidden_size**0.5
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedGemmaRotaryEmbedding(config.head_dim,
-                                                         max_position_embeddings=2048,
-                                                         base=config.rope_theta)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
+        self.rotary_emb = UnpaddedGemmaRotaryEmbedding(
+            config.head_dim, max_position_embeddings=2048, base=config.rope_theta
+        )
 
-        self.layers = nn.ModuleList([UnpaddedGemmaDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [UnpaddedGemmaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+        )
         self.norm = UnpaddedGemmaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -316,8 +381,10 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
-        nz_hidden_states = self.embed_tokens(nz_input_ids) * self.normalization_factor  # Normalized
-        cos_sin          = self.rotary_emb(max_seqlen)
+        nz_hidden_states = (
+            self.embed_tokens(nz_input_ids) * self.normalization_factor
+        )  # Normalized
+        cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -325,24 +392,22 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
                 nz_hidden_states = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
                     use_fast_norm,
-                    use_fast_rope
+                    use_fast_rope,
                 )
             else:
                 nz_hidden_states = decoder_layer(
                     cos_sin=cos_sin,
-                    
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                     use_fast_norm=use_fast_norm,
-                    use_fast_rope=use_fast_rope
+                    use_fast_rope=use_fast_rope,
                 )
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
@@ -352,7 +417,9 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
 
 class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
     # Ignore rotary emb inv_freq on load, as they will be calculated on creation
-    _keys_to_ignore_on_load_unexpected = [r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"]
+    _keys_to_ignore_on_load_unexpected = [
+        r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"
+    ]
 
     def __init__(self, config):
         super().__init__(config)
@@ -378,7 +445,7 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
 
     def get_decoder(self):
         return self.model
-    
+
     def forward(
         self,
         # Unpadded inputs
@@ -412,10 +479,10 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
                 hidden_states,
                 nz_shifted_label_ids,
                 nz_shifted_loss_weights,
-                num_seq
+                num_seq,
             )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=logits
+            logits=logits,
         )

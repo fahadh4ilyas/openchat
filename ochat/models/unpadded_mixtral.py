@@ -37,7 +37,7 @@ try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
     from flash_attn.bert_padding import pad_input
 except ImportError:
-    print ("FlashAttention not found. Install it if you need to train models.")
+    print("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rms_layernorm import fast_rms_layernorm
 from ochat.kernel.rope import fast_rope_embedding
@@ -45,7 +45,10 @@ from ochat.kernel.rope import fast_rope_embedding
 
 logger = logging.get_logger(__name__)
 
-def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2) -> float:
+
+def load_balancing_loss_func(
+    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2
+) -> float:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
 
@@ -68,7 +71,9 @@ def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tenso
 
     if isinstance(gate_logits, tuple):
         compute_device = gate_logits[0].device
-        concatenated_gate_logits = torch.cat([layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0)
+        concatenated_gate_logits = torch.cat(
+            [layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0
+        )
 
     routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
 
@@ -87,17 +92,25 @@ def load_balancing_loss_func(gate_logits: torch.Tensor, num_experts: torch.Tenso
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+def weighted_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
 # @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
+def weighted_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
+    return (
+        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
+    ).sum()
 
 
 @torch.jit.script  # type: ignore
-def rms_norm(hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float):
+def rms_norm(
+    hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
+):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
 
@@ -113,7 +126,14 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    fast_rope: bool = False,
+):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
@@ -149,16 +169,20 @@ class UnpaddedMixtralRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
-
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
 
@@ -194,10 +218,18 @@ class UnpaddedMixtralAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
+        )
 
     def forward(
         self,
@@ -207,39 +239,60 @@ class UnpaddedMixtralAttention(nn.Module):
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(nz_hidden_states).view(
+            -1, self.num_heads, self.head_dim
+        )
+        key_states = self.k_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
+        value_states = self.v_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
 
         # RoPE
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
-                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
-
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True,
-                window_size=(self.sliding_window, self.sliding_window) if self.sliding_window is not None else (-1, -1))
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
+            )
         else:
             attn_output = flash_attn_varlen_func(
-                q=query_states, k=key_states, v=value_states,
-                cu_seqlens_q=cu_seqlens, cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen, max_seqlen_k=max_seqlen,
-
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True,
-                window_size=(self.sliding_window, self.sliding_window) if self.sliding_window is not None else (-1, -1))
+                q=query_states,
+                k=key_states,
+                v=value_states,
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_k=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_k=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
+            )
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
         return self.o_proj(attn_output)
+
 
 class UnpaddedMixtralBLockSparseTop2MLP(nn.Module):
     def __init__(self, config: MixtralConfig):
@@ -254,7 +307,9 @@ class UnpaddedMixtralBLockSparseTop2MLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, nz_hidden_states):
-        current_nz_hidden_states = self.act_fn(self.w1(nz_hidden_states)) * self.w3(nz_hidden_states)
+        current_nz_hidden_states = self.act_fn(self.w1(nz_hidden_states)) * self.w3(
+            nz_hidden_states
+        )
         current_nz_hidden_states = self.w2(current_nz_hidden_states)
         return current_nz_hidden_states
 
@@ -281,7 +336,9 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
         # gating
         self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
 
-        self.experts = nn.ModuleList([UnpaddedMixtralBLockSparseTop2MLP(config) for _ in range(self.num_experts)])
+        self.experts = nn.ModuleList(
+            [UnpaddedMixtralBLockSparseTop2MLP(config) for _ in range(self.num_experts)]
+        )
 
     def forward(self, nz_hidden_states: torch.Tensor) -> torch.Tensor:
         """ """
@@ -291,18 +348,24 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
         router_logits = self.gate(nz_hidden_states)
 
         routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+        routing_weights, selected_experts = torch.topk(
+            routing_weights, self.top_k, dim=-1
+        )
         routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
         # we cast back to the input dtype
         routing_weights = routing_weights.to(nz_hidden_states.dtype)
 
         final_nz_hidden_states = torch.zeros(
-            (sequence_length, hidden_dim), dtype=nz_hidden_states.dtype, device=nz_hidden_states.device
+            (sequence_length, hidden_dim),
+            dtype=nz_hidden_states.dtype,
+            device=nz_hidden_states.device,
         )
 
         # One hot encode the selected experts to create an expert mask
         # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        expert_mask = torch.nn.functional.one_hot(
+            selected_experts, num_classes=self.num_experts
+        ).permute(2, 1, 0)
 
         # Loop over all available experts in the model and perform the computation on each expert
         for expert_idx in range(self.num_experts):
@@ -320,12 +383,19 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
             # the current expert. We need to make sure to multiply the output hidden
             # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
             current_state = nz_hidden_states[None, top_x_list].reshape(-1, hidden_dim)
-            current_nz_hidden_states = expert_layer(current_state) * routing_weights[top_x_list, idx_list, None]
+            current_nz_hidden_states = (
+                expert_layer(current_state)
+                * routing_weights[top_x_list, idx_list, None]
+            )
 
             # However `index_add_` only support torch tensors for indexing so we'll use
             # the `top_x` tensor here.
-            final_nz_hidden_states.index_add_(0, top_x, current_nz_hidden_states.to(nz_hidden_states.dtype))
-        final_nz_hidden_states = final_nz_hidden_states.reshape(sequence_length, hidden_dim)
+            final_nz_hidden_states.index_add_(
+                0, top_x, current_nz_hidden_states.to(nz_hidden_states.dtype)
+            )
+        final_nz_hidden_states = final_nz_hidden_states.reshape(
+            sequence_length, hidden_dim
+        )
         return final_nz_hidden_states, router_logits
 
 
@@ -336,8 +406,12 @@ class UnpaddedMixtralDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.self_attn = UnpaddedMixtralAttention(config=config)
         self.block_sparse_moe = UnpaddedMixtralSparseMoeBlock(config=config)
-        self.input_layernorm = UnpaddedMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = UnpaddedMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = UnpaddedMixtralRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = UnpaddedMixtralRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -348,7 +422,7 @@ class UnpaddedMixtralDecoderLayer(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_norm: bool = False,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
@@ -356,19 +430,20 @@ class UnpaddedMixtralDecoderLayer(nn.Module):
         nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
-
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            use_fast_rope=use_fast_rope
+            use_fast_rope=use_fast_rope,
         )
         nz_hidden_states = residual + nz_hidden_states
 
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
+        nz_hidden_states = self.post_attention_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states, router_logits = self.block_sparse_moe(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -406,12 +481,21 @@ class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedMixtralRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                         max_position_embeddings=2048,
-                                                         base=config.rope_theta)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
+        self.rotary_emb = UnpaddedMixtralRotaryEmbedding(
+            config.hidden_size // config.num_attention_heads,
+            max_position_embeddings=2048,
+            base=config.rope_theta,
+        )
 
-        self.layers = nn.ModuleList([UnpaddedMixtralDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [
+                UnpaddedMixtralDecoderLayer(config)
+                for _ in range(config.num_hidden_layers)
+            ]
+        )
         self.norm = UnpaddedMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -435,7 +519,7 @@ class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
-        cos_sin          = self.rotary_emb(max_seqlen)
+        cos_sin = self.rotary_emb(max_seqlen)
 
         all_router_logits = ()
 
@@ -445,24 +529,22 @@ class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
                 nz_hidden_states, router_logits = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
                     use_fast_norm,
-                    use_fast_rope
+                    use_fast_rope,
                 )
             else:
                 nz_hidden_states, router_logits = decoder_layer(
                     cos_sin=cos_sin,
-                    
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                     use_fast_norm=use_fast_norm,
-                    use_fast_rope=use_fast_rope
+                    use_fast_rope=use_fast_rope,
                 )
             all_router_logits += (router_logits,)
 
@@ -503,7 +585,7 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
 
     def get_decoder(self):
         return self.model
-    
+
     def forward(
         self,
         # Unpadded inputs
@@ -534,17 +616,43 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
             assert nz_shifted_loss_weights is not None
 
             aux_loss = load_balancing_loss_func(
-                    router_logits, self.num_experts, self.num_experts_per_tok
-                )
-            
+                router_logits, self.num_experts, self.num_experts_per_tok
+            )
+
             if num_seq > 0:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq
-                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / num_seq + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), acc
+                acc = (
+                    weighted_token_accuracy(
+                        logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq
+                )
+                loss = (
+                    (
+                        weighted_cross_entropy(
+                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                        )
+                        / num_seq
+                        + self.router_aux_loss_coef * aux_loss,
+                        self.router_aux_loss_coef * aux_loss,
+                    ),
+                    acc,
+                )
             else:
-                acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
-                loss = (weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) + self.router_aux_loss_coef * aux_loss, self.router_aux_loss_coef * aux_loss), acc
+                acc = weighted_token_accuracy(
+                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                loss = (
+                    (
+                        weighted_cross_entropy(
+                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                        )
+                        + self.router_aux_loss_coef * aux_loss,
+                        self.router_aux_loss_coef * aux_loss,
+                    ),
+                    acc,
+                )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=logits
+            logits=logits,
         )

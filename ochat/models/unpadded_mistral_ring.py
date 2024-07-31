@@ -33,9 +33,12 @@ from transformers.models.mistral.configuration_mistral import MistralConfig
 
 try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
-    from ring_flash_attn import zigzag_ring_flash_attn_func, zigzag_ring_flash_attn_varlen_func
+    from ring_flash_attn import (
+        zigzag_ring_flash_attn_func,
+        zigzag_ring_flash_attn_varlen_func,
+    )
 except ImportError:
-    print ("FlashAttention not found. Install it if you need to train models.")
+    print("FlashAttention not found. Install it if you need to train models.")
 
 from ochat.kernel.rms_layernorm import fast_rms_layernorm
 from ochat.kernel.rope import fast_rope_embedding
@@ -45,17 +48,25 @@ logger = logging.get_logger(__name__)
 
 
 @torch.jit.script  # type: ignore
-def weighted_token_accuracy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
+def weighted_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
 # @torch.jit.script  # type: ignore
-def weighted_cross_entropy(logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor):
-    return (weights * cross_entropy_loss(logits, labels, inplace_backward = True)[0]).sum()
+def weighted_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
+    return (
+        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
+    ).sum()
 
 
 @torch.jit.script  # type: ignore
-def rms_norm(hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float):
+def rms_norm(
+    hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
+):
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
 
@@ -71,7 +82,14 @@ def rotate_half(x: torch.Tensor):
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary_pos_emb(q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, position_ids: torch.Tensor, fast_rope: bool = False):
+def apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+    position_ids: torch.Tensor,
+    fast_rope: bool = False,
+):
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
@@ -107,16 +125,20 @@ class UnpaddedMistralRotaryEmbedding(torch.nn.Module):
         super().__init__()
 
         # RoPE
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
-
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
 
@@ -168,10 +190,18 @@ class UnpaddedMistralAttention(nn.Module):
                 f" and `num_heads`: {self.num_heads})."
             )
 
-        self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
+        self.q_proj = nn.Linear(
+            self.hidden_size, self.num_heads * self.head_dim, bias=False
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+        )
+        self.o_proj = nn.Linear(
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
+        )
 
     def forward(
         self,
@@ -181,31 +211,47 @@ class UnpaddedMistralAttention(nn.Module):
         nz_position_ids: torch.LongTensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(-1, self.num_heads, self.head_dim)
-        key_states = self.k_proj(nz_hidden_states).view(-1,   self.num_key_value_heads, self.head_dim)
-        value_states = self.v_proj(nz_hidden_states).view(-1, self.num_key_value_heads, self.head_dim)
+        query_states = self.q_proj(nz_hidden_states).view(
+            -1, self.num_heads, self.head_dim
+        )
+        key_states = self.k_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
+        value_states = self.v_proj(nz_hidden_states).view(
+            -1, self.num_key_value_heads, self.head_dim
+        )
 
         # RoPE
         cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, nz_position_ids, use_fast_rope)
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = zigzag_ring_flash_attn_func(
-                q=query_states.unsqueeze(0), k=key_states.unsqueeze(0), v=value_states.unsqueeze(0),
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
         else:
             attn_output = zigzag_ring_flash_attn_varlen_func(
-                q=query_states, k=key_states, v=value_states,
+                q=query_states,
+                k=key_states,
+                v=value_states,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
-                dropout_p=self.attention_dropout if self.training else 0.0, causal=True)
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
@@ -219,8 +265,12 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         self.hidden_size = config.hidden_size
         self.self_attn = UnpaddedMistralAttention(config=config)
         self.mlp = UnpaddedMistralMLP(config=config)
-        self.input_layernorm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.post_attention_layernorm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = UnpaddedMistralRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_attention_layernorm = UnpaddedMistralRMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
 
     def forward(
         self,
@@ -231,7 +281,7 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_norm: bool = False,
-        use_fast_rope: bool = False
+        use_fast_rope: bool = False,
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
@@ -239,19 +289,20 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
-
             nz_hidden_states=nz_hidden_states,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
-            use_fast_rope=use_fast_rope
+            use_fast_rope=use_fast_rope,
         )
         nz_hidden_states = residual + nz_hidden_states
 
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
+        nz_hidden_states = self.post_attention_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -289,12 +340,21 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
-        self.rotary_emb   = UnpaddedMistralRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                         max_position_embeddings=2048,
-                                                         base=config.rope_theta)
+        self.embed_tokens = nn.Embedding(
+            config.vocab_size, config.hidden_size, self.padding_idx
+        )
+        self.rotary_emb = UnpaddedMistralRotaryEmbedding(
+            config.hidden_size // config.num_attention_heads,
+            max_position_embeddings=2048,
+            base=config.rope_theta,
+        )
 
-        self.layers = nn.ModuleList([UnpaddedMistralDecoderLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layers = nn.ModuleList(
+            [
+                UnpaddedMistralDecoderLayer(config)
+                for _ in range(config.num_hidden_layers)
+            ]
+        )
         self.norm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
@@ -318,7 +378,7 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
-        cos_sin          = self.rotary_emb(max_seqlen)
+        cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -326,24 +386,22 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                 nz_hidden_states = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
-
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
                     max_seqlen,
                     use_fast_norm,
-                    use_fast_rope
+                    use_fast_rope,
                 )
             else:
                 nz_hidden_states = decoder_layer(
                     cos_sin=cos_sin,
-                    
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
                     max_seqlen=max_seqlen,
                     use_fast_norm=use_fast_norm,
-                    use_fast_rope=use_fast_rope
+                    use_fast_rope=use_fast_rope,
                 )
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
@@ -378,7 +436,7 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
 
     def get_decoder(self):
         return self.model
-    
+
     def forward(
         self,
         # Unpadded inputs
@@ -408,10 +466,20 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
 
-            acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights) / total_seqs
-            loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights) / total_seqs
+            acc = (
+                weighted_token_accuracy(
+                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                / total_seqs
+            )
+            loss = (
+                weighted_cross_entropy(
+                    logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                / total_seqs
+            )
 
         return CausalLMOutputWithPast(
             loss=(loss, acc),  # type: ignore
-            logits=logits
+            logits=logits,
         )

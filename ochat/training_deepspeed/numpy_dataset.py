@@ -9,7 +9,9 @@ class NumpyDataset:
 
         # Convert parquet to numpy for fast random access
         table = pq.read_table(dataset_filename, memory_map=True)
-        self.dataset = {k: v.to_numpy() for k, v in zip(table.column_names, table.columns)}
+        self.dataset = {
+            k: v.to_numpy() for k, v in zip(table.column_names, table.columns)
+        }
         self.length = table.num_rows
 
         # read metadata
@@ -23,5 +25,5 @@ class NumpyDataset:
     def __getitem__(self, indices: Union[str, Iterable[int]]):
         if isinstance(indices, str):
             return self.dataset[indices]
-        
+
         return {k: v[indices] for k, v in self.dataset.items()}
