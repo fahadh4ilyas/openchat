@@ -218,8 +218,7 @@ pass
 
 
 def fast_rms_layernorm(X, W, eps, gemma=False):
-    if not X.is_cuda:
-        X = X.to(W.device)
-    out = Fast_RMS_Layernorm.apply(X, W, eps, gemma)
+    with torch.cuda.device(X.device.index):
+        out = Fast_RMS_Layernorm.apply(X, W, eps, gemma)
     return out
 pass
