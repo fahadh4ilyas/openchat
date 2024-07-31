@@ -37,6 +37,8 @@ try:
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
 
+from ochat.kernel.rms_layernorm import fast_rms_layernorm
+
 
 logger = logging.get_logger(__name__)
 
@@ -90,7 +92,9 @@ class UnpaddedQwen2RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, use_fast_norm: bool = False):
+        if use_fast_norm:
+            return fast_rms_layernorm(self, hidden_states)
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
@@ -101,8 +105,17 @@ class UnpaddedQwen2RotaryEmbedding(torch.nn.Module):
 
         # RoPE
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
-        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.device = device
+        self.calculate_cos_sin(max_position_embeddings)
+
+    def calculate_cos_sin(self, max_position_embeddings):
+
+        self.max_position_embeddings = max_position_embeddings
+
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+
+        freqs = torch.outer(t, self.inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
@@ -110,7 +123,10 @@ class UnpaddedQwen2RotaryEmbedding(torch.nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self):
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_position_embeddings:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
         return self.cos_cached, self.sin_cached
 
 
@@ -212,12 +228,13 @@ class UnpaddedQwen2DecoderLayer(nn.Module):
         nz_hidden_states: torch.Tensor,
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int
+        max_seqlen: int,
+        use_fast_norm: bool = False
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
 
-        nz_hidden_states = self.input_layernorm(nz_hidden_states)
+        nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
 
@@ -231,7 +248,7 @@ class UnpaddedQwen2DecoderLayer(nn.Module):
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states)
+        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -271,7 +288,7 @@ class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
         self.rotary_emb   = UnpaddedQwen2RotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                         max_position_embeddings=config.max_position_embeddings,
+                                                         max_position_embeddings=2048,
                                                          base=config.rope_theta)
 
         self.layers = nn.ModuleList([UnpaddedQwen2DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)])
@@ -294,9 +311,10 @@ class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        use_fast_norm: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
-        cos_sin          = self.rotary_emb()
+        cos_sin          = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -308,7 +326,8 @@ class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
-                    max_seqlen
+                    max_seqlen,
+                    use_fast_norm
                 )
             else:
                 nz_hidden_states = decoder_layer(
@@ -317,10 +336,11 @@ class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
-                    max_seqlen=max_seqlen
+                    max_seqlen=max_seqlen,
+                    use_fast_norm=use_fast_norm
                 )
 
-        nz_hidden_states = self.norm(nz_hidden_states)
+        nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
 
         return nz_hidden_states
 
@@ -363,14 +383,16 @@ class Qwen2ForCausalLM(UnpaddedQwen2PreTrainedModel):
         total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None
+        nz_shifted_loss_weights: Optional[torch.Tensor] = None,
+        use_fast_norm: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
             nz_input_ids=nz_input_ids,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen
+            max_seqlen=max_seqlen,
+            use_fast_norm=use_fast_norm,
         )
         logits = self.lm_head(hidden_states)
 

@@ -38,6 +38,8 @@ try:
 except ImportError:
     print ("FlashAttention not found. Install it if you need to train models.")
 
+from ochat.kernel.rms_layernorm import fast_rms_layernorm
+
 
 logger = logging.get_logger(__name__)
 
@@ -116,7 +118,9 @@ class UnpaddedLlamaRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, use_fast_norm: bool = False):
+        if use_fast_norm:
+            return fast_rms_layernorm(self, hidden_states)
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
@@ -128,9 +132,18 @@ class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
 
         # RoPE
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim))
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
-        t = t / scaling_factor
-        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.device = device
+        self.scaling_factor = scaling_factor
+        self.calculate_cos_sin(max_position_embeddings)
+
+    def calculate_cos_sin(self, max_position_embeddings):
+
+        self.max_position_embeddings = max_position_embeddings
+
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        t = t / self.scaling_factor
+        freqs = torch.outer(t, self.inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
@@ -138,7 +151,10 @@ class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self):
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_position_embeddings:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
         return self.cos_cached, self.sin_cached
 
 
@@ -169,6 +185,8 @@ class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
 
         self.yarn(device)
 
+    def calculate_cos_sin(self, max_position_embeddings):
+
         # Build here to make `torch.jit.trace` work.
         self.max_seq_len_cached = max_position_embeddings
         t = torch.arange(self.max_seq_len_cached, dtype=torch.int64, device=self.inv_freq.device).type_as(self.inv_freq)
@@ -192,7 +210,10 @@ class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.mscale = float(_yarn_get_mscale(self.scale) * self.attn_factor) # Get n-d magnitude scaling corrected for interpolation
 
-    def forward(self):
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_seq_len_cached:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
         return self.cos_cached, self.sin_cached
 
 
@@ -226,8 +247,16 @@ class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
                 smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (high_freq_factor - low_freq_factor)
                 new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
         inv_freq = torch.tensor(new_freqs, dtype=inv_freq.dtype, device=inv_freq.device)
-        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=device).type_as(inv_freq)
-        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.device = device
+        self.calculate_cos_sin(max_position_embeddings)
+
+    def calculate_cos_sin(self, max_position_embeddings):
+
+        self.max_position_embeddings = max_position_embeddings
+
+        t = torch.arange(max_position_embeddings, dtype=torch.int64, device=self.device).type_as(self.inv_freq)
+        freqs = torch.outer(t, self.inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
@@ -235,7 +264,10 @@ class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
 
-    def forward(self):
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_position_embeddings:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
         return self.cos_cached, self.sin_cached
 
 
@@ -330,12 +362,13 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         nz_hidden_states: torch.Tensor,
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
-        max_seqlen: int
+        max_seqlen: int,
+        use_fast_norm: bool = False
     ) -> torch.Tensor:
         # Self Attention
         residual = nz_hidden_states
 
-        nz_hidden_states = self.input_layernorm(nz_hidden_states)
+        nz_hidden_states = self.input_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.self_attn(
             cos_sin=cos_sin,
 
@@ -349,7 +382,7 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states)
+        nz_hidden_states = self.post_attention_layernorm(nz_hidden_states, use_fast_norm)
         nz_hidden_states = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
@@ -391,18 +424,18 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         rope_scaling_type = config.rope_scaling.get("type", None) or config.rope_scaling.get("rope_type", None)
         if rope_scaling_type == "linear":
             self.rotary_emb = UnpaddedLlamaLinearScalingRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                                      max_position_embeddings=config.max_position_embeddings,
+                                                                      max_position_embeddings=2048,
                                                                       base=config.rope_theta,
                                                                       scaling_factor=config.rope_scaling["factor"])
         elif rope_scaling_type == "yarn":
             self.rotary_emb   = UnpaddedLlamaYarnRotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                            max_position_embeddings=config.max_position_embeddings,
+                                                            max_position_embeddings=2048,
                                                             scale=config.rope_scaling["factor"],
                                                             original_max_position_embeddings=config.rope_scaling["original_max_position_embeddings"],
                                                             base=config.rope_theta)
         elif rope_scaling_type == "llama3":
             self.rotary_emb = UnpaddedLlama3RotaryEmbedding(config.hidden_size // config.num_attention_heads,
-                                                            max_position_embeddings=config.max_position_embeddings,
+                                                            max_position_embeddings=2048,
                                                             factor=config.rope_scaling["factor"],
                                                             low_freq_factor=config.rope_scaling["low_freq_factor"],
                                                             high_freq_factor=config.rope_scaling["high_freq_factor"],
@@ -429,9 +462,10 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        use_fast_norm: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
-        cos_sin          = self.rotary_emb()
+        cos_sin          = self.rotary_emb(max_seqlen)
 
         # decoder layers
         for decoder_layer in self.layers:
@@ -443,7 +477,8 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
                     nz_hidden_states,
                     nz_position_ids,
                     cu_seqlens,
-                    max_seqlen
+                    max_seqlen,
+                    use_fast_norm
                 )
             else:
                 nz_hidden_states = decoder_layer(
@@ -452,10 +487,11 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
                     cu_seqlens=cu_seqlens,
-                    max_seqlen=max_seqlen
+                    max_seqlen=max_seqlen,
+                    use_fast_norm=use_fast_norm
                 )
 
-        nz_hidden_states = self.norm(nz_hidden_states)
+        nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
 
         return nz_hidden_states
 
@@ -500,15 +536,17 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         max_seqlen: int,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
-        nz_shifted_loss_weights:      Optional[torch.Tensor] = None,
-        num_seq: Optional[int] = 0
+        nz_shifted_loss_weights: Optional[torch.Tensor] = None,
+        num_seq: int = 0,
+        use_fast_norm: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
             nz_input_ids=nz_input_ids,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen
+            max_seqlen=max_seqlen,
+            use_fast_norm=use_fast_norm,
         )
         logits = self.lm_head(hidden_states)
 
@@ -527,54 +565,3 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
             loss=loss,  # type: ignore
             logits=logits
         )
-
-
-class PaddedLlamaForCausalLM(LlamaForCausalLM):
-    """Compat layer for padded inputs"""
-
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        position_ids: Optional[torch.Tensor] = None,
-        # unused
-        return_dict: bool = True,
-        output_attentions: bool = False,
-        output_hidden_states: bool = False
-    ):
-        batch_size, seq_len = input_ids.shape
-        if position_ids is None:
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 0)
-
-        # get indices
-        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
-        indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
-        max_seqlen_in_batch = int(seqlens_in_batch.max().item())
-        cu_seqlens = torch.nn.functional.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
-
-        # Unpad inputs
-        nz_input_ids    = torch.take_along_dim(input_ids,    indices)
-        nz_position_ids = torch.take_along_dim(position_ids, indices)
-
-        # Unpadded forward
-        logits = super().forward(
-            nz_input_ids=nz_input_ids,
-            nz_position_ids=nz_position_ids,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen_in_batch
-        ).logits
-
-        # Pad logits
-        logits = pad_input(logits, indices, batch_size, seq_len)
-
-        return CausalLMOutputWithPast(logits=logits)  # type: ignore
-
-    def prepare_inputs_for_generation(self,
-                                      input_ids: torch.Tensor,
-                                      **kwargs):
-        return {
-            "input_ids": input_ids,
-            "attention_mask": kwargs.get("attention_mask"),
-            "position_ids": kwargs.get("position_ids")
-        }
