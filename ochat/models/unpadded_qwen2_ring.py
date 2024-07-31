@@ -115,7 +115,7 @@ class UnpaddedQwen2RMSNorm(nn.Module):
 
     def forward(self, hidden_states, use_fast_norm: bool = False):
         if use_fast_norm:
-            return fast_rms_layernorm(self, hidden_states)
+            return fast_rms_layernorm(hidden_states, self.weight, self.variance_epsilon)
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 

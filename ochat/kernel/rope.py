@@ -91,8 +91,6 @@ def _rope_embedding(
         tl.store(Q + offs_q1, Q1 * cos1 - Q2 * sin1, mask=mask)
         tl.store(Q + offs_q2, Q2 * cos1 + Q1 * sin1, mask=mask)
     pass
-
-
 pass
 
 
@@ -138,7 +136,6 @@ class Fast_RoPE_Embedding(torch.autograd.Function):
         ctx.cos = cos
         ctx.sin = sin
         return Q.view(seq_len, n_heads, head_dim)
-
     pass
 
     @staticmethod
@@ -176,10 +173,7 @@ class Fast_RoPE_Embedding(torch.autograd.Function):
             None,
             None,
         )
-
     pass
-
-
 pass
 
 
@@ -187,6 +181,4 @@ def fast_rope_embedding(Q, K, cos, sin):
     Q = Fast_RoPE_Embedding.apply(Q, cos, sin)
     K = Fast_RoPE_Embedding.apply(K, cos, sin)
     return Q, K
-
-
 pass

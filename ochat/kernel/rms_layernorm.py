@@ -55,8 +55,6 @@ def _rms_layernorm_forward(
     normed = normed.to(W_row.dtype)  # Exact copy from HF
     output = normed * W_row
     tl.store(Y + col_offsets, output, mask=mask)
-
-
 pass
 
 
@@ -111,8 +109,6 @@ def _rms_layernorm_backward(
     rowsum_dY_normed = tl.sum(dY_W * normed, axis=0)
     output = inv_var / n_cols * (n_cols * dY_W - normed * rowsum_dY_normed)
     tl.store(dY + col_offsets, output, mask=mask)
-
-
 pass
 
 
@@ -151,8 +147,6 @@ def _gemma_rms_layernorm_forward(
     output = normed * (W_row + 1.0)
 
     tl.store(Y + col_offsets, output, mask=mask)
-
-
 pass
 
 
@@ -189,7 +183,6 @@ class Fast_RMS_Layernorm(torch.autograd.Function):
         ctx.GEMMA = gemma
         ctx.save_for_backward(X, W, r)
         return Y.view(*shape)
-
     pass
 
     @staticmethod
@@ -220,18 +213,13 @@ class Fast_RMS_Layernorm(torch.autograd.Function):
         )
         dX = dY.view(*shape)
         return dX, None, None, None
-
     pass
-
-
 pass
 
 
-def fast_rms_layernorm(layernorm, X, gemma=False):
-    W = layernorm.weight
-    eps = layernorm.variance_epsilon
+def fast_rms_layernorm(X, W, eps, gemma=False):
+    if not X.is_cuda:
+        X = X.to(W.device)
     out = Fast_RMS_Layernorm.apply(X, W, eps, gemma)
     return out
-
-
 pass
