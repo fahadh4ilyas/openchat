@@ -510,6 +510,11 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
             num_seq,
         )
 
+        if self.config.final_logit_softcapping is not None:
+            logits = logits / self.config.final_logit_softcapping
+            logits = torch.tanh(logits)
+            logits = logits * self.config.final_logit_softcapping
+
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
             logits=logits,
