@@ -54,6 +54,9 @@ def lm_head_with_loss(
 ):
     logits = nn.functional.linear(hidden_states, embed_weights)
 
+    if nz_shifted_label_ids is None:
+        return None, logits
+
     token_accuracy = (
         nz_shifted_loss_weights
         * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)
@@ -498,17 +501,13 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
             use_fast_rope=use_fast_rope,
         )
 
-        loss = None
-        if nz_shifted_label_ids is not None:
-            assert nz_shifted_loss_weights is not None
-
-            loss, logits = lm_head_with_loss(
-                self.model.embed_tokens.weight,
-                hidden_states,
-                nz_shifted_label_ids,
-                nz_shifted_loss_weights,
-                num_seq,
-            )
+        loss, logits = lm_head_with_loss(
+            self.model.embed_tokens.weight,
+            hidden_states,
+            nz_shifted_label_ids,
+            nz_shifted_loss_weights,
+            num_seq,
+        )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
