@@ -19,7 +19,10 @@ _V3_2_PREFIXES = {
     "assistant": "Assistant:",
 }
 
-PREFIXES = {"gemma": {"user": "user", "assistant": "model"}}
+PREFIXES = {
+    "gemma": {"user": "user", "assistant": "model"},
+    "gemma2": {"user": "user", "assistant": "model"},
+}
 
 
 def _v3_2_role_prefix(from_role: str, condition: str):
@@ -361,6 +364,23 @@ MODEL_CONFIG_MAP = {
             inference_condition="GPT4 Correct",
         ),
     ),
+    "gemma2": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
     "qwen2": ModelConfig(
         # Model
         model_max_context=32768,
@@ -656,6 +676,24 @@ MODEL_CONFIG_MAP = {
             inference_condition="GPT4 correct",
         ),
     ),
+    "gemma2_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma2_chatml",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
     "gemma_instruct": ModelConfig(
         # Model
         model_max_context=8192,
@@ -688,6 +726,24 @@ MODEL_CONFIG_MAP = {
         conversation_template=partial(
             ChatMLConversationTemplate,
             model="gemma",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemma2_instruct": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma2",
             role_prefix=_chatml_role_prefix,
             prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
             inference_condition="GPT4 correct",

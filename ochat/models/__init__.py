@@ -20,6 +20,7 @@ from ochat.models.unpadded_mixtral_ring import (
     MixtralForCausalLM as MixtralRingForCausalLM,
 )
 from ochat.models.unpadded_gemma import GemmaForCausalLM
+from ochat.models.unpadded_gemma2 import Gemma2ForCausalLM
 from ochat.models.unpadded_gemma_ring import GemmaForCausalLM as GemmaRingForCausalLM
 from ochat.models.unpadded_phi import PhiForCausalLM
 from ochat.models.unpadded_phi_ori import PhiForCausalLM as OriPhiForCausalLM
