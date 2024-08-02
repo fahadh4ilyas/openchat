@@ -375,7 +375,7 @@ class UnpaddedGemma2Model(UnpaddedGemma2PreTrainedModel):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
-        self.normalization_factor = config.hidden_size**0.5
+        self.hidden_size = config.hidden_size
 
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
@@ -412,9 +412,9 @@ class UnpaddedGemma2Model(UnpaddedGemma2PreTrainedModel):
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
-        nz_hidden_states = (
-            self.embed_tokens(nz_input_ids) * self.normalization_factor
-        )  # Normalized
+        nz_hidden_states = self.embed_tokens(nz_input_ids)
+        normalizer = torch.tensor(self.hidden_size**0.5, dtype=nz_hidden_states.dtype)
+        nz_hidden_states = nz_hidden_states*normalizer
         cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
