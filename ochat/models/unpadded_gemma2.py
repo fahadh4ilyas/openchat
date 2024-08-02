@@ -415,7 +415,7 @@ class UnpaddedGemma2Model(UnpaddedGemma2PreTrainedModel):
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
         normalizer = torch.tensor(self.hidden_size**0.5, dtype=nz_hidden_states.dtype)
-        nz_hidden_states = nz_hidden_states*normalizer
+        nz_hidden_states = nz_hidden_states * normalizer
         cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers

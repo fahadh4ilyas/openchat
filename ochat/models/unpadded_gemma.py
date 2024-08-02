@@ -77,7 +77,8 @@ def rms_norm(
 
     variance = hidden_states.pow(2).mean(-1, keepdim=True)
     hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
-    return (1 + weight) * hidden_states.to(input_dtype)
+    output = (1 + weight.to(torch.float32)) * hidden_states
+    return output.to(input_dtype)
 
 
 def rotate_half(x: torch.Tensor):
@@ -119,7 +120,9 @@ class UnpaddedGemmaRMSNorm(nn.Module):
 
     def forward(self, hidden_states, use_fast_norm: bool = False):
         if use_fast_norm:
-            return fast_rms_layernorm(hidden_states, self.weight, self.variance_epsilon, gemma=True)
+            return fast_rms_layernorm(
+                hidden_states, self.weight, self.variance_epsilon, gemma=True
+            )
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
@@ -383,9 +386,9 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
-        nz_hidden_states = (
-            self.embed_tokens(nz_input_ids) * self.normalization_factor
-        )  # Normalized
+        nz_hidden_states = self.embed_tokens(nz_input_ids)
+        normalizer = torch.tensor(self.hidden_size**0.5, dtype=nz_hidden_states.dtype)
+        nz_hidden_states = nz_hidden_states * normalizer
         cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
