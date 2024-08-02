@@ -44,28 +44,19 @@ from ochat.kernel.rope import fast_rope_embedding
 logger = logging.get_logger(__name__)
 
 
-# @torch.jit.script
-def lm_head_with_loss(
-    embed_weights: torch.Tensor,
-    hidden_states: torch.Tensor,
-    nz_shifted_label_ids: torch.Tensor,
-    nz_shifted_loss_weights: torch.Tensor,
-    num_seq: int,
+def weighted_token_accuracy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
 ):
-    logits = nn.functional.linear(hidden_states, embed_weights)
+    return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
-    if nz_shifted_label_ids is None:
-        return None, logits
 
-    token_accuracy = (
-        nz_shifted_loss_weights
-        * (torch.argmax(logits.detach(), dim=-1) == nz_shifted_label_ids)
-    ).sum() / num_seq
-    loss = (
-        nz_shifted_loss_weights
-        * cross_entropy_loss(logits, nz_shifted_label_ids, inplace_backward=True)[0]
-    ).sum() / num_seq
-    return (loss, token_accuracy), logits
+# @torch.jit.script  # type: ignore
+def weighted_cross_entropy(
+    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
+):
+    return (
+        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
+    ).sum()
 
 
 @torch.jit.script  # type: ignore
@@ -501,19 +492,41 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
             use_fast_norm=use_fast_norm,
             use_fast_rope=use_fast_rope,
         )
-
-        loss, logits = lm_head_with_loss(
-            self.model.embed_tokens.weight,
-            hidden_states,
-            nz_shifted_label_ids,
-            nz_shifted_loss_weights,
-            num_seq,
-        )
+        logits = nn.functional.linear(hidden_states, self.model.embed_tokens.weight)
 
         if self.config.final_logit_softcapping is not None:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
             logits = logits * self.config.final_logit_softcapping
+
+        loss = None
+        if nz_shifted_label_ids is not None:
+            assert nz_shifted_loss_weights is not None
+
+            if num_seq > 0:
+                acc = (
+                    weighted_token_accuracy(
+                        logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    )
+                    / num_seq,
+                    acc,
+                )
+            else:
+                acc = weighted_token_accuracy(
+                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
+                )
+                loss = (
+                    weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    ),
+                    acc,
+                )
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
