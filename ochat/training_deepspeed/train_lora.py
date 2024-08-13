@@ -19,6 +19,7 @@ import numpy as np
 from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
 
 from ochat.config import MODEL_CONFIG_MAP
+from ochat.training_deepspeed.utils import mlflow_stopper_wrapper
 from ochat.training_deepspeed.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 from ochat.training_deepspeed.train_ring_lora import train as train_ring
@@ -459,6 +460,7 @@ def calculate_auto_lr(
     return lr
 
 
+@mlflow_stopper_wrapper
 def train(args: TrainingArguments):
     deepspeed.init_distributed(dist_backend="nccl")
     dsconfig = HfDeepSpeedConfig(args.deepspeed_config)

@@ -18,6 +18,7 @@ import numpy as np
 from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
 
 from ochat.config import MODEL_CONFIG_MAP
+from ochat.training_deepspeed.utils import mlflow_stopper_wrapper
 from ochat.training_deepspeed.multipack_dataloader_single import MultipackDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 
@@ -388,6 +389,7 @@ def calculate_auto_lr(
     return lr
 
 
+@mlflow_stopper_wrapper
 def train(args: TrainingArguments):
     # Dataset
     train_dataset = create_dataset(args, "train")

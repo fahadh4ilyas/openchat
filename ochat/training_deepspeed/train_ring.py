@@ -17,6 +17,7 @@ import mlflow
 import numpy as np
 
 from ochat.config import MODEL_CONFIG_MAP
+from ochat.training_deepspeed.utils import mlflow_stopper_wrapper
 from ochat.training_deepspeed.multipack_dataloader_ring import (
     MultipackDistributedDataloader,
 )
@@ -408,6 +409,7 @@ def calculate_auto_lr(
     return lr
 
 
+@mlflow_stopper_wrapper
 def train(args: TrainingArguments):
     deepspeed.init_distributed(dist_backend="nccl")
     dsconfig = HfDeepSpeedConfig(args.deepspeed_config)
