@@ -246,7 +246,7 @@ class UnpaddedQwen2Attention(nn.Module):
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
-                if use_sliding_window is not None
+                if use_sliding_window
                 else (-1, -1),
             )
         else:
@@ -261,7 +261,7 @@ class UnpaddedQwen2Attention(nn.Module):
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
-                if use_sliding_window is not None
+                if use_sliding_window
                 else (-1, -1),
             )
 
