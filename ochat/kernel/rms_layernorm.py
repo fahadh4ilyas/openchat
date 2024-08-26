@@ -61,6 +61,7 @@ pass
 @triton.heuristics(
     {
         "GEMMA": lambda args: args["GEMMA"],
+        "BACKWEIGHT": lambda args: args["BACKWEIGHT"]
     }
 )
 @triton.jit
@@ -78,6 +79,7 @@ def _rms_layernorm_backward(
     n_cols,
     eps,
     GEMMA: tl.constexpr,
+    BACKWEIGHT: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
     """
@@ -92,6 +94,7 @@ def _rms_layernorm_backward(
     dY += row_idx * dY_row_stride
     X += row_idx * X_row_stride
     r += row_idx * r_row_stride
+    dW += row_idx * dW_row_stride
 
     dY_row = tl.load(dY + col_offsets, mask=mask, other=0).to(tl.float32)
     X_row = tl.load(X + col_offsets, mask=mask, other=0).to(tl.float32)
@@ -109,6 +112,10 @@ def _rms_layernorm_backward(
     rowsum_dY_normed = tl.sum(dY_W * normed, axis=0)
     output = inv_var / n_cols * (n_cols * dY_W - normed * rowsum_dY_normed)
     tl.store(dY + col_offsets, output, mask=mask)
+
+    if BACKWEIGHT:
+        dW_row = dY_row * X_row * inv_var
+        tl.store(dW + col_offsets, dW_row, mask=mask)
 pass
 
 
@@ -181,6 +188,7 @@ class Fast_RMS_Layernorm(torch.autograd.Function):
         ctx.BLOCK_SIZE = BLOCK_SIZE
         ctx.num_warps = num_warps
         ctx.GEMMA = gemma
+        ctx.BACKWEIGHT = W.requires_grad
         ctx.save_for_backward(X, W, r)
         return Y.view(*shape)
     pass
@@ -192,7 +200,7 @@ class Fast_RMS_Layernorm(torch.autograd.Function):
         dY = dY.view(-1, dim)
         X, W, r = ctx.saved_tensors
         n_rows, n_cols = dY.shape
-        dW = X
+        dW = torch.zeros_like(X)
 
         _rms_layernorm_backward[(n_rows,)](
             dY,
@@ -208,10 +216,14 @@ class Fast_RMS_Layernorm(torch.autograd.Function):
             n_cols,
             ctx.eps,
             GEMMA=ctx.GEMMA,
+            BACKWEIGHT=ctx.BACKWEIGHT,
             BLOCK_SIZE=ctx.BLOCK_SIZE,
             num_warps=ctx.num_warps,
         )
         dX = dY.view(*shape)
+        if ctx.BACKWEIGHT:
+            dW = torch.sum(dW, dim=0)
+            return dX, dW, None, None
         return dX, None, None, None
     pass
 pass

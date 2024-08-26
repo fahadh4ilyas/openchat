@@ -499,6 +499,7 @@ def train(args: TrainingArguments):
                 **batch_tensor,
                 **batch_info,
                 total_seqs=total_seqs,
+                use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
 

@@ -511,6 +511,7 @@ def train(args: TrainingArguments):
                 **batch_tensor,
                 **batch_info,
                 num_seq=all_numseq,
+                use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
 
