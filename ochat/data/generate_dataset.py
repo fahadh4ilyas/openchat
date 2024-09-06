@@ -186,7 +186,7 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         batches = list(enumerate(_split(conversations, executor._max_workers)))
         outputs = [None] * len(batches)
         for i in range(0, len(batches), args.max_jobs):
-            subbatches = batches[i:i+10]
+            subbatches = batches[i:i+args.max_jobs]
             handles = [
                 executor.submit(
                     convert_conversation_batch, job_id=job_id, batch=batch, args=args
