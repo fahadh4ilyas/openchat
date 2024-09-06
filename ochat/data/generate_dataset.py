@@ -34,6 +34,7 @@ class DataArguments(BaseModel):
     pretokenized_in_files: bool = Field(False)
     ignore_last_token: bool = Field(False)
     max_workers: Optional[int] = Field(None)
+    max_jobs: int = Field(10)
 
 
 PAD_TOKEN_ID = 0
@@ -182,19 +183,22 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=args.max_workers
     ) as executor:
-        handles = [
-            executor.submit(
-                convert_conversation_batch, job_id=job_id, batch=batch, args=args
-            )
-            for job_id, batch in enumerate(_split(conversations, executor._max_workers))
-        ]
+        batches = list(enumerate(_split(conversations, executor._max_workers)))
+        outputs = [None] * len(batches)
+        for i in range(0, len(batches), args.max_jobs):
+            subbatches = batches[i:i+10]
+            handles = [
+                executor.submit(
+                    convert_conversation_batch, job_id=job_id, batch=batch, args=args
+                )
+                for job_id, batch in subbatches
+            ]
 
-        # Collecting
-        outputs = [None] * len(handles)
-        for handle in concurrent.futures.as_completed(handles):
-            output, job_id = handle.result()
-            outputs[job_id] = output
-            job_print(job_id, "Collect result is done")
+            # Collecting
+            for handle in concurrent.futures.as_completed(handles):
+                output, job_id = handle.result()
+                outputs[job_id] = output
+                job_print(job_id, "Collect result is done")
         outputs = [d for output in outputs for d in output]
 
     # write
@@ -245,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--pretokenized-in-files", action="store_true")
     parser.add_argument("--ignore-last-token", action="store_true")
     parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument("--max-jobs", type=int, default=10)
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))
