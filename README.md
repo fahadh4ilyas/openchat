@@ -54,20 +54,14 @@ assert tokens == [1, 7596, 1247, 28747, 26256, 2936, 7653, 1413, 334, 1680, 3200
 
 ## <a id="installation"></a> Installation
 
-To use OpenChat, you need to install PyTorch, then you can install OpenChat via pip:
-
-```bash
-pip3 install ochat
-```
-
-If you encounter compatibility problems, you can try to create a new `conda` environment following the instructions below.
+To use OpenChat, you need to install PyTorch. If you encounter compatibility problems, you can try to create a new `conda` environment following the instructions below.
 
 ```bash
 conda create -y --name openchat
 conda activate openchat
 
 conda install -y python=3.11
-pip3 install torch torchvision torchaudio
+pip3 install torch
 
 pip3 install git+http://git.blackeye.id/fahadh/openchat.git
 ```
