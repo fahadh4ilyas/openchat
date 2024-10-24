@@ -1,13 +1,16 @@
 FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel AS build
 
-ARG GITLAB_TOKEN
-
 RUN apt update && apt install gcc g++ git -y && apt clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /openchat-workspace
 
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
 
-RUN pip install git+https://__token__:${GITLAB_TOKEN}@git.blackeye.id/ai-ebdesk-private/openchat.git --no-cache-dir --user
+COPY ochat /openchat-workspace/
+COPY pyproject.toml /openchat-workspace/
+
+RUN pip install /openchat-workspace --no-cache-dir --user
 
 RUN DS_BUILD_CPU_ADAM=1 DS_BUILD_FUSED_ADAM=1 pip install deepspeed --no-cache-dir --user
 
