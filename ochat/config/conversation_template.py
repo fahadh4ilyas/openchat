@@ -28,6 +28,10 @@ class PretokenizedConversation(BaseModel):
     input_ids: List[int]
     loss_weights: List[float]
 
+class PretrainingText(BaseModel):
+    text: str
+    weight: float = 1.0
+
 
 class ConversationTemplate(BaseModel):
     tokenizer: PreTrainedTokenizerBase

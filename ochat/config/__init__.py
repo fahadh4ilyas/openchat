@@ -7,6 +7,7 @@ from ochat.config.model_config import ModelConfig
 from ochat.config.conversation_template import (
     Conversation,
     PretokenizedConversation,
+    PretrainingText
     ConversationTemplate,
     ChatMLConversationTemplate,
 )

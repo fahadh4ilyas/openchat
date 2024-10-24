@@ -5,7 +5,7 @@ Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokeni
 """
 
 import concurrent.futures
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import argparse
 from datetime import datetime
 import random
@@ -32,6 +32,7 @@ class DataArguments(BaseModel):
     eval_ratio: float = Field(0.0)
     data_length_multiple_of: int = Field(1)
     pretokenized_in_files: bool = Field(False)
+    pretraining_data: bool = Field(False)
     ignore_last_token: bool = Field(False)
     max_workers: Optional[int] = Field(None)
     max_jobs: int = Field(10)
@@ -114,7 +115,7 @@ def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArgume
 
 
 def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
-    from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation
+    from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation, PretrainingText
 
     # Tokenization
     model_config = MODEL_CONFIG_MAP[args.model_type]
@@ -129,6 +130,29 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         ]
         tokens_list = [b.input_ids for b in batch]
         weights_list = [b.loss_weights for b in batch]
+    elif args.pretraining_data:
+        batch = [
+            PretrainingText(**orjson.loads(json_line)) for json_line in batch
+        ]
+        all_text = [b.text for b in batch]
+        text_mapping = dict(zip(all_text, conv_template._safe_tokenize(all_text)))
+        tokens_list = []
+        weights_list = []
+        for b in batch:
+            tokens = []
+
+            tokens.extend(conv_template.bos_tokens_)
+            token_msg = text_mapping[b.text]
+            tokens.extend(token_msg)
+            if (args.force_eos_token or args.eos_final) and tokens[-1] != conv_template.eos_tokens_[0]:
+                tokens.extend(conv_template.eos_tokens_)
+            if args.per_sequence_loss:
+                weights = [b.weight / len(tokens)] * len(tokens)
+            else:
+                weights = [b.weight] * len(tokens)
+
+            tokens_list.append(tokens)
+            weights_list.append(weights)
     else:
         batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
 
@@ -247,6 +271,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval-ratio", type=float, default=0.0)
     parser.add_argument("--data-length-multiple-of", type=int, default=1)
     parser.add_argument("--pretokenized-in-files", action="store_true")
+    parser.add_argument("--pretraining-data", action="store_true")
     parser.add_argument("--ignore-last-token", action="store_true")
     parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--max-jobs", type=int, default=10)
