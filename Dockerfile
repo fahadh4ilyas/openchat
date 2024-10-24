@@ -15,7 +15,7 @@ RUN pip install flash-attn --no-build-isolation --no-cache-dir --user
 
 RUN pip install ring_flash_attn@git+https://github.com/zhuzilin/ring-flash-attention --no-cache-dir --user
 
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime AS vllm-openai
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime AS openchat
 
 RUN apt update && apt install gcc g++ -y && apt clean && rm -rf /var/lib/apt/lists/*
 
