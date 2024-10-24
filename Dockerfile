@@ -2,12 +2,10 @@ FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel AS build
 
 RUN apt update && apt install gcc g++ git -y && apt clean && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /openchat-workspace
+WORKDIR /openchat
 
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
-
-WORKDIR /openchat
 
 COPY . /openchat/
 
