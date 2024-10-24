@@ -7,10 +7,10 @@ WORKDIR /openchat-workspace
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
 
-COPY ochat /openchat-workspace/
+COPY ochat /openchat-workspace/ochat
 COPY pyproject.toml /openchat-workspace/
 
-RUN pip install /openchat-workspace --no-cache-dir --user
+RUN pip install . --no-cache-dir --user
 
 RUN DS_BUILD_CPU_ADAM=1 DS_BUILD_FUSED_ADAM=1 pip install deepspeed --no-cache-dir --user
 
