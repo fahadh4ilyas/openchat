@@ -7,8 +7,9 @@ WORKDIR /openchat-workspace
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
 
-COPY ochat /openchat-workspace/ochat
-COPY pyproject.toml /openchat-workspace/
+COPY ochat pyproject.toml /openchat-workspace/openchat/
+
+WORKDIR /openchat-workspace/openchat
 
 RUN pip install . --no-cache-dir --user
 
