@@ -27,5 +27,3 @@ COPY ochat/training_deepspeed/deepspeed* /openchat-workspace/config/
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
 ENV PYTHONPATH=/workspace-lib:/vllm-workspace
-
-ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
