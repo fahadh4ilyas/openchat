@@ -1,11 +1,12 @@
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel AS build
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-devel
 
-RUN apt update && apt install gcc g++ git -y && apt clean && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /openchat
+RUN apt update && apt install gcc g++ git tmux htop -y && apt clean && rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
 ENV PYTHONUSERBASE=/workspace-lib
+ENV PYTHONPATH=/workspace-lib:/openchat-workspace
+
+WORKDIR /openchat
 
 COPY . /openchat/
 
@@ -17,15 +18,8 @@ RUN pip install flash-attn --no-build-isolation --no-cache-dir --user
 
 RUN pip install ring_flash_attn@git+https://github.com/zhuzilin/ring-flash-attention --no-cache-dir --user
 
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime AS openchat
-
-RUN apt update && apt install gcc g++ -y && apt clean && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /openchat-workspace
 
-COPY --from=build /workspace-lib /workspace-lib
-COPY ochat/training_deepspeed/deepspeed* /openchat-workspace/config/
+RUN rm -rf /openchat
 
-ENV PATH=/workspace-lib:/workspace-lib/bin:$PATH
-ENV PYTHONUSERBASE=/workspace-lib
-ENV PYTHONPATH=/workspace-lib:/vllm-workspace
+COPY ochat/training_deepspeed/deepspeed* /openchat-workspace/config/
