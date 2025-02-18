@@ -1,4 +1,4 @@
-from typing import Optional, Callable, Iterable, List
+from typing import Optional, Callable, Iterable, List, Dict
 from transformers.tokenization_utils import PreTrainedTokenizerBase
 
 from pydantic import BaseModel
@@ -321,6 +321,143 @@ class ChatMLConversationTemplate(BaseModel):
                         tokens.extend(self.eos_tokens_)
                         token_msg.extend(self.eos_tokens_)
                     first_index = token_msg.index(self.sep[-1])
+                    weights.extend([0.0] * first_index)
+                    rest_index = len(token_msg[first_index:])
+                    w = msg.weight
+                    if seq_level_weight:
+                        w /= rest_index
+                    weights.extend([w] * rest_index)
+
+            result_tokens.append(tokens)
+            result_weights.append(weights)
+
+        return result_tokens, result_weights
+
+class DeepseekConversationTemplate(BaseModel):
+    tokenizer: PreTrainedTokenizerBase
+
+    prompt_format: Dict[str, str]
+
+    bos_tokens_: List[int]
+    eos_tokens_: List[int]
+
+    class Config:
+        arbitrary_types_allowed = True
+
+    def __init__(self, **data):
+        tokenizer = data["tokenizer"]
+
+        bos_tokens_ = tokenizer("").input_ids
+        eos_tokens_ = [tokenizer.eos_token_id]
+
+        super().__init__(
+            **data,
+            bos_tokens_=bos_tokens_,
+            eos_tokens_=eos_tokens_,
+        )
+    
+    def _safe_tokenize(self, strings: Iterable[str]) -> List[List[int]]:
+        return self.tokenizer(
+            strings, return_attention_mask=False, add_special_tokens=False
+        ).input_ids
+
+    def _convert_to_chatml(
+        self, conversation: Conversation
+    ) -> List[List[ChatMLMessage]]:
+        list_prompts = []
+
+        weighted_indices = [i for i, msg in enumerate(conversation.items) if msg.weight is not None and msg.weight != 0 and '<think>' in msg.content]
+
+        for idx in weighted_indices:
+            temp_conversation_items = [item.model_copy(update={'weight': 0.0}, deep=True) for item in conversation.items[:idx]] + [conversation.items[idx].model_copy(deep=True)]
+            temp_conversation = Conversation(items=temp_conversation_items, condition=conversation.condition, system=conversation.system)
+
+            prompts = []
+            if temp_conversation.system:
+                prompts.append(
+                    ChatMLMessage(
+                        message=conversation.system,
+                        weight=0.0,
+                    )
+                )
+            
+            for message in temp_conversation.items:
+                role = message.role
+                if role not in ['user', 'assistant']:
+                    raise ValueError(f"Role {role} is not supported")
+                weight = message.weight
+                if role == 'assistant' and weight == 0 and '<think>' in message.content:
+                    content = message.content.split('</think>')[-1]
+                else:
+                    content = message.content
+                prompts.append(
+                    ChatMLMessage(
+                        message=self.prompt_format[role].format(
+                            role=role.title(),
+                            text=content.strip(),
+                        ),
+                        weight=weight,
+                    )
+                )
+            list_prompts.append(prompts)
+        
+        return list_prompts
+
+    def tokenize_conversations(
+        self,
+        conversations: Iterable[Conversation],
+        inference: bool = False,
+        seq_level_weight: bool = False,
+        force_eos_token: bool = False,
+        eos_final: bool = False,
+    ):
+        
+        chatml_conversations = [
+            c for conv in conversations for c in self._convert_to_chatml(conv)
+        ]
+
+        all_text = [msg.message for conv in chatml_conversations for msg in conv]
+        text_mapping = dict(zip(all_text, self._safe_tokenize(all_text)))
+
+        result_tokens = []
+        result_weights = []
+        for conv in chatml_conversations:
+            tokens = []
+            weights = []
+
+            tokens.extend(self.bos_tokens_)
+            weights.extend([0.0] * len(self.bos_tokens_))
+
+            for msg in conv[:-1]:
+                token_msg = text_mapping[msg.message]
+                tokens.extend(token_msg)
+                if msg.weight == 0:
+                    weights.extend([0.0] * len(token_msg))
+                else:
+                    if force_eos_token and token_msg[-1] != self.eos_tokens_[0]:
+                        tokens.extend(self.eos_tokens_)
+                        token_msg.extend(self.eos_tokens_)
+                    first_index = 1
+                    weights.extend([0.0] * first_index)
+                    rest_index = len(token_msg[first_index:])
+                    w = msg.weight
+                    if seq_level_weight:
+                        w /= rest_index
+                    weights.extend([w] * rest_index)
+
+            if len(conv) > 0:
+                msg = conv[-1]
+                token_msg = text_mapping[msg.message]
+                tokens.extend(token_msg)
+                if msg.weight == 0:
+                    weights.extend([0.0] * len(token_msg))
+                else:
+                    if (force_eos_token or eos_final) and token_msg[
+                        -1
+                    ] != self.eos_tokens_[0]:
+                        tokens.extend(self.eos_tokens_)
+                        token_msg.extend(self.eos_tokens_)
+                    first_index = 1
                     weights.extend([0.0] * first_index)
                     rest_index = len(token_msg[first_index:])
                     w = msg.weight

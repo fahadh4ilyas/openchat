@@ -10,6 +10,7 @@ from ochat.config.conversation_template import (
     PretrainingText,
     ConversationTemplate,
     ChatMLConversationTemplate,
+    DeepseekConversationTemplate
 )
 import ochat.models
 
@@ -785,6 +786,43 @@ MODEL_CONFIG_MAP = {
             role_prefix=_chatml_role_prefix,
             prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
             inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen2_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen2Ring_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2RingForCausalLM.from_pretrained,
+            torch_dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
         ),
     ),
     "zephyr": ModelConfig(
