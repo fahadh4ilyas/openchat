@@ -418,6 +418,25 @@ MODEL_CONFIG_MAP = {
             inference_condition="GPT4 Correct",
         ),
     ),
+    "deepseekv2": ModelConfig(
+        # Model
+        model_max_context=163840,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.DeepseekV2ForCausalLM.from_pretrained,
+            torch_dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
     "llama_chatml": ModelConfig(
         # Model
         model_max_context=4096,

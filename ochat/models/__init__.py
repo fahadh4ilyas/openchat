@@ -1,3 +1,4 @@
+from ochat.models.unpadded_deepseekv2 import DeepseekV2ForCausalLM
 from ochat.models.unpadded_llama import LlamaForCausalLM
 from ochat.models.unpadded_llama_split import LlamaForCausalLM as LlamaSplitForCausalLM
 from ochat.models.unpadded_llama_long import LlamaForCausalLM as LlamaLongForCausalLM
