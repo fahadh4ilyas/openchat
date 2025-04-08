@@ -94,10 +94,10 @@ def apply_rotary_pos_emb(
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
     h, s, d = q.shape
-    q = q.view(h, s, d // 2, 2).transpose(4, 3).reshape(h, s, d)
+    q = q.view(h, s, d // 2, 2).transpose(3, 2).reshape(h, s, d)
 
     h, s, d = k.shape
-    k = k.view(h, s, d // 2, 2).transpose(4, 3).reshape(h, s, d)
+    k = k.view(h, s, d // 2, 2).transpose(3, 2).reshape(h, s, d)
 
     q = q.transpose(0, 1)
     k = k.transpose(0, 1)
@@ -596,19 +596,19 @@ class UnpaddedDeepseekV2Attention(nn.Module):
         )
 
         query_states = k_pe.new_empty(self.num_heads, q_len, self.q_head_dim)
-        query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
+        query_states[:, :, : self.qk_nope_head_dim] = q_nope
         query_states[:, :, :, self.qk_nope_head_dim :] = q_pe
 
         key_states = k_pe.new_empty(self.num_heads, q_len, self.q_head_dim)
-        key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
+        key_states[:, :, : self.qk_nope_head_dim] = k_nope
         key_states[:, :, :, self.qk_nope_head_dim :] = k_pe
 
         if self.q_head_dim != self.v_head_dim:
             value_states = F.pad(value_states, [0, self.q_head_dim - self.v_head_dim])
         
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        value_states = value_states.transpose(1, 2)
+        query_states = query_states.transpose(0, 1)
+        key_states = key_states.transpose(0, 1)
+        value_states = value_states.transpose(0, 1)
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
