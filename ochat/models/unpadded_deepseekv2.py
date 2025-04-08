@@ -140,7 +140,7 @@ def yarn_linear_ramp_mask(min, max, dim):
 
 
 class UnpaddedDeepseekV2RMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps):
+    def __init__(self, hidden_size, eps=1e-6):
         """
         UnpaddedDeepseekV2RMSNorm is equivalent to T5LayerNorm
         """
@@ -241,11 +241,14 @@ class UnpaddedDeepseekV2YarnRotaryEmbedding(torch.nn.Module):
         )
         inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
         self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
         self.max_position_embeddings = max_position_embeddings
 
-        t = torch.arange(max_position_embeddings, device=self.device, dtype=torch.float32)
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
 
         freqs = torch.outer(t, self.inv_freq)
 
