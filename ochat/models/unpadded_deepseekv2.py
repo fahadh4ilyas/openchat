@@ -90,16 +90,26 @@ def apply_rotary_pos_emb(
     position_ids: torch.Tensor,
     fast_rope: bool = False,
 ):
-    # q, k:     [nnz, num_heads, head_dim]
+    # q, k:     [num_heads, nnz, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    h, s, d = q.shape
+    q = q.view(h, s, d // 2, 2).transpose(4, 3).reshape(h, s, d)
+
+    h, s, d = k.shape
+    k = k.view(h, s, d // 2, 2).transpose(4, 3).reshape(h, s, d)
+
+    q = q.transpose(0, 1)
+    k = k.transpose(0, 1)
+
     if fast_rope:
-        return fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
-    cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+        q_embed, k_embed = fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
+    else:
+        cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.transpose(0, 1), k_embed.transpose(0, 1)
 
 
 # Inverse dim formula to find dim based on number of rotations
