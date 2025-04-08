@@ -205,6 +205,8 @@ class UnpaddedDeepseekV2YarnRotaryEmbedding(torch.nn.Module):
         mscale=1,
         mscale_all_dim=0,
     ):
+        super().__init__()
+
         self.scaling_factor = scaling_factor
         self.original_max_position_embeddings = original_max_position_embeddings
         self.beta_fast = beta_fast
