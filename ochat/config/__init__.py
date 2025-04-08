@@ -422,7 +422,7 @@ MODEL_CONFIG_MAP = {
         # Model
         model_max_context=163840,
         model_tokenizer_create=partial(
-            transformers.AutoTokenizer.from_pretrained, use_fast=False
+            transformers.AutoTokenizer.from_pretrained, use_fast=True
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.DeepseekV2ForCausalLM.from_pretrained,
