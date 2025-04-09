@@ -638,7 +638,7 @@ class UnpaddedDeepseekV2Attention(nn.Module):
             attn_output = attn_output[:, :, : self.v_head_dim]
 
         # attn_output: [total_nnz, num_heads, head_dim]
-        attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
+        attn_output = attn_output.view(-1, self.num_heads * self.v_head_dim)  # type: ignore
         return self.o_proj(attn_output)
 
 
