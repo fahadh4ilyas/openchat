@@ -217,6 +217,7 @@ class UnpaddedQwen3Attention(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_rope: bool = False,
+        use_fast_norm: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
@@ -224,10 +225,10 @@ class UnpaddedQwen3Attention(nn.Module):
 
         query_states = self.q_norm(self.q_proj(nz_hidden_states).view(
             -1, self.num_heads, self.head_dim
-        ))
+        ), use_fast_norm)
         key_states = self.k_norm(self.k_proj(nz_hidden_states).view(
             -1, self.num_key_value_heads, self.head_dim
-        ))
+        ), use_fast_norm)
         value_states = self.v_proj(nz_hidden_states).view(
             -1, self.num_key_value_heads, self.head_dim
         )
@@ -299,6 +300,7 @@ class UnpaddedQwen3DecoderLayer(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
             use_fast_rope=use_fast_rope,
+            use_fast_norm=use_fast_norm,
         )
         nz_hidden_states = residual + nz_hidden_states
 
