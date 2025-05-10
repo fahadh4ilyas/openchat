@@ -215,7 +215,7 @@ class UnpaddedQwen3Attention(nn.Module):
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        input_shape = hidden_states.shape[:-1]
+        input_shape = nz_hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
         query_states = self.q_norm(self.q_proj(nz_hidden_states).view(
