@@ -177,30 +177,23 @@ class UnpaddedQwen3Attention(nn.Module):
         self.hidden_size = config.hidden_size
         self.layer_idx = layer_idx
         self.max_window_layers = config.max_window_layers
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
+        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.scaling = self.head_dim**-0.5
         self.sliding_window = config.sliding_window
         self.attention_dropout = config.attention_dropout
         self.use_sliding_window = config.use_sliding_window
 
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
-
         self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
+            self.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
         )
         self.k_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
         self.v_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=config.attention_bias
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
         self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
+            config.num_attention_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
         )
         self.q_norm = UnpaddedQwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
         self.k_norm = UnpaddedQwen3RMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
@@ -220,14 +213,17 @@ class UnpaddedQwen3Attention(nn.Module):
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
         query_states = self.q_norm(self.q_proj(nz_hidden_states).view(
-            -1, self.num_heads, self.head_dim
+            *hidden_shape
         ), use_fast_norm)
         key_states = self.k_norm(self.k_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
+            *hidden_shape
         ), use_fast_norm)
         value_states = self.v_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
+            *hidden_shape
         )
 
         # RoPE
@@ -246,6 +242,7 @@ class UnpaddedQwen3Attention(nn.Module):
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
@@ -261,6 +258,7 @@ class UnpaddedQwen3Attention(nn.Module):
                 cu_seqlens_k=cu_seqlens,
                 max_seqlen_q=max_seqlen,
                 max_seqlen_k=max_seqlen,
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
