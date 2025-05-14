@@ -63,7 +63,7 @@ conda activate openchat
 conda install -y python=3.11
 pip3 install torch
 
-pip3 install git+http://git.blackeye.id/fahadh/openchat.git
+pip3 install git+https://github.com/fahadh4ilyas/openchat.git@finetune
 ```
 
 <details>
@@ -72,6 +72,7 @@ pip3 install git+http://git.blackeye.id/fahadh/openchat.git
 ```bash
 git clone http://git.blackeye.id/fahadh/openchat.git
 cd openchat
+git switch finetune
 
 pip3 install --upgrade pip  # enable PEP 660 support
 pip3 install -e .
