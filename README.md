@@ -70,7 +70,7 @@ pip3 install git+https://github.com/fahadh4ilyas/openchat.git@finetune
   <summary>In addition to PyPI, you can also install from source (click to expand)</summary>
 
 ```bash
-git clone http://git.blackeye.id/fahadh/openchat.git
+git clone https://github.com/fahadh4ilyas/openchat.git
 cd openchat
 git switch finetune
 
