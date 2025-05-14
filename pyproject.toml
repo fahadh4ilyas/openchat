@@ -13,34 +13,18 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
-    "colorama",
-    "beautifulsoup4", 
-    "markdownify", 
-    "pylatexenc",
-    "sympy",
-    "openai>=1",
-    "tenacity", 
-    "tiktoken", 
     "tqdm", 
-    "wandb", 
+    "mlflow", 
     "numba", 
-    "datasets", 
     "orjson", 
-    "torch", 
-    "packaging",
-    "ninja",
-    "flash-attn",
-    "ray", 
+    "torch>=2.1.0", 
     "sentencepiece", 
-    "transformers>=4.40.1", 
+    "transformers>=4.41.0",
+    "peft",
+    "bitsandbytes",
     "accelerate", 
     "protobuf",
-    "fastapi", 
-    "pydantic", 
-    "shortuuid", 
-    "uvicorn", 
-    "vllm>=0.4.0",
-    "pytest"
+    "pydantic"
 ]
 
 [project.urls]

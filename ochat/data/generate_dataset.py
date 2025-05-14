@@ -4,174 +4,254 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
+import concurrent.futures
+from typing import List, Optional, Tuple
 import argparse
-import os
-import gc
+from datetime import datetime
 import random
 
-import ray
+from pydantic import BaseModel, Field
+
+import concurrent
 import orjson
 import pyarrow
 from pyarrow import parquet
 
 
+class DataArguments(BaseModel):
+    model_path: str = Field(...)
+    model_type: str = Field(...)
+    in_files: List[str] = Field(...)
+    out_prefix: str = Field(...)
+    per_sequence_loss: bool = Field(False)
+    force_eos_token: bool = Field(False)
+    eos_final: bool = Field(False)
+    max_seq_length: Optional[int] = Field(None)
+    ignore_index: int = Field(0)
+    seed: int = Field(42)
+    eval_ratio: float = Field(0.0)
+    data_length_multiple_of: int = Field(1)
+    pretokenized_in_files: bool = Field(False)
+    pretraining_data: bool = Field(False)
+    ignore_last_token: bool = Field(False)
+    max_workers: Optional[int] = Field(None)
+    max_jobs: int = Field(10)
+
+
 PAD_TOKEN_ID = 0
 
 
-def _split(a, n):
+def job_print(job_id: int, *args, **kwargs):
+    print(
+        f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] [JOB ID: {job_id}]',
+        *args,
+        **kwargs,
+    )
+
+
+def _split(a: list, n: int):
     # Split list a to n chunks
     # https://stackoverflow.com/questions/2130016/splitting-a-list-into-n-parts-of-approximately-equal-length
     k, m = divmod(len(a), n)
-    return [a[i*k+min(i, m): (i+1)*k+min(i+1, m)] for i in range(n)]
+    return [a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 
-def truncate_trailing_zero_weighted(tokens, weights):
+def truncate_trailing_zero_weighted(tokens: list, weights: list):
     non_zero_index = len(weights) - 1
     while non_zero_index >= 0 and weights[non_zero_index] == 0:
         non_zero_index -= 1
 
-    return tokens[:non_zero_index + 1], weights[:non_zero_index + 1]
+    return tokens[: non_zero_index + 1], weights[: non_zero_index + 1]
 
 
-def add_single_conv(output, tokens, weights):
+def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArguments):
     # truncate trailing zero weighted tokens
     tokens, weights = truncate_trailing_zero_weighted(tokens, weights)
     if not tokens:
         return
 
     # labels
+    LABEL_PAD_TOKEN_ID = (
+        args.ignore_index if args.ignore_index != PAD_TOKEN_ID else PAD_TOKEN_ID
+    )
+    labels = [(t if w != 0 else LABEL_PAD_TOKEN_ID) for t, w in zip(tokens, weights)]
+
+    # Shift data
+    labels = labels[1:]
+    weights = weights[1:]
+    if args.ignore_last_token:
+        length = len(tokens) - 1
+        last_token = [tokens[-1]]
+        tokens = tokens[:-1]
+    else:
+        length = len(tokens)
+        last_token = [PAD_TOKEN_ID]
+        labels = labels + [LABEL_PAD_TOKEN_ID]
+        weights = weights + [0.0]
+
+    # Pad data
+    addition = (
+        -(-length // args.data_length_multiple_of) * args.data_length_multiple_of
+        - length
+    )
+    if addition > 0:
+        tokens.extend(last_token + [PAD_TOKEN_ID] * (addition - 1))
+        weights.extend([0.0] * addition)
+        labels.extend([LABEL_PAD_TOKEN_ID] * addition)
     length = len(tokens)
-    labels = [(t if w != 0 else PAD_TOKEN_ID) for t, w in zip(tokens, weights)]
 
     # populate results
     results = {
         "total_length": length,
-
         "seqlens": [length],
         "nz_input_ids": tokens,
         "nz_position_ids": list(range(length)),
-
-        "nz_shifted_label_ids":    labels[1:]  + [PAD_TOKEN_ID],
-        "nz_shifted_loss_weights": weights[1:] + [0.0]
+        "nz_shifted_label_ids": labels,
+        "nz_shifted_loss_weights": weights,
     }
     results["num_seqs"] = sum(results["nz_shifted_loss_weights"])
 
-    for k, v in results.items():
-        output[k].append(v)
+    outputs.append(results)
 
 
-@ray.remote
-def convert_conversation_batch(model_type: str, model_path: str, batch: list, schema: pyarrow.Schema, per_sequence_loss: bool):
-    from ochat.config import MODEL_CONFIG_MAP, Conversation
+def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
+    from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation, PretrainingText
 
     # Tokenization
-    model_config = MODEL_CONFIG_MAP[model_type]
-    tokenizer = model_config.model_tokenizer_create(model_path)
+    model_config = MODEL_CONFIG_MAP[args.model_type]
+    tokenizer = model_config.model_tokenizer_create(args.model_path)
     conv_template = model_config.conversation_template(tokenizer=tokenizer)
 
     # Decode data
-    print ("Decoding JSON ...")
-    batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
+    job_print(job_id, "Decoding JSON ...")
+    if args.pretokenized_in_files:
+        batch = [
+            PretokenizedConversation(**orjson.loads(json_line)) for json_line in batch
+        ]
+        tokens_list = [b.input_ids for b in batch]
+        weights_list = [b.loss_weights for b in batch]
+    elif args.pretraining_data:
+        batch = [
+            PretrainingText(**orjson.loads(json_line)) for json_line in batch
+        ]
+        all_text = [b.text for b in batch]
+        text_mapping = dict(zip(all_text, conv_template._safe_tokenize(all_text)))
+        tokens_list = []
+        weights_list = []
+        for b in batch:
+            tokens = []
 
-    # Tokenize
-    print ("Tokenizing ...")
-    tokens_list, weights_list = conv_template.tokenize_conversations(batch, inference=False, seq_level_weight=per_sequence_loss)
+            tokens.extend(conv_template.bos_tokens_)
+            token_msg = text_mapping[b.text]
+            tokens.extend(token_msg)
+            if (args.force_eos_token or args.eos_final) and tokens[-1] != conv_template.eos_tokens_[0]:
+                tokens.extend(conv_template.eos_tokens_)
+            if args.per_sequence_loss:
+                weights = [b.weight / len(tokens)] * len(tokens)
+            else:
+                weights = [b.weight] * len(tokens)
 
-    del batch
-    gc.collect()
+            tokens_list.append(tokens)
+            weights_list.append(weights)
+    else:
+        batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
+
+        # Tokenize
+        job_print(job_id, "Tokenizing ...")
+        tokens_list = []
+        weights_list = []
+        if len(batch) > 0:
+            tokens_list, weights_list = conv_template.tokenize_conversations(
+                batch,
+                inference=False,
+                seq_level_weight=args.per_sequence_loss,
+                force_eos_token=args.force_eos_token,
+                eos_final=args.eos_final,
+            )
 
     # Generate data
-    print ("Generating ...")
-    max_context = model_config.model_max_context
+    job_print(job_id, "Generating ...")
+    max_context = args.max_seq_length or model_config.model_max_context
 
-    outputs = {k: [] for k in schema.names}
+    outputs = []
     for tokens, weights in zip(tokens_list, weights_list):
         assert len(tokens) == len(weights)
 
         # Truncate to specified tokens
-        tokens  = tokens[:max_context]
+        tokens = tokens[:max_context]
         weights = weights[:max_context]
 
         # Add to results
-        add_single_conv(outputs, tokens, weights)
+        add_single_conv(outputs, tokens, weights, args)
 
-    del tokens_list, weights_list
-    gc.collect()
+    job_print(job_id, "Chunk finish")
 
-    print ("To table ...")
-    table = pyarrow.Table.from_pydict(outputs, schema=schema)
-
-    del outputs
-    gc.collect()
-
-    print ("Chunk finish")
-    return table
+    return outputs, job_id
 
 
-def generate_epoch(seed: int, model_type: str, model_path: str, in_filename: str, out_filename: str, per_sequence_loss: bool):
+def generate_split(conversations: list, split_name: str, args: DataArguments):
     # schema
-    metadata = {
-        "model_type": model_type
-    }
+    metadata = {"model_type": args.model_type}
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
         pyarrow.field("num_seqs", pyarrow.float32()),
-
         pyarrow.field(f"seqlens", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_input_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_position_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_shifted_label_ids", pyarrow.list_(pyarrow.int32())),
-        pyarrow.field(f"nz_shifted_loss_weights", pyarrow.list_(pyarrow.float32()))
+        pyarrow.field(f"nz_shifted_loss_weights", pyarrow.list_(pyarrow.float32())),
     ]
 
     schema = pyarrow.schema(schema, metadata={"metadata_json": orjson.dumps(metadata)})
 
-    # Load data
-    with open(in_filename, "rb") as f:
-        batches = f.readlines()
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=args.max_workers
+    ) as executor:
+        batches = list(enumerate(_split(conversations, executor._max_workers)))
+        outputs = [None] * len(batches)
+        for i in range(0, len(batches), args.max_jobs):
+            subbatches = batches[i:i+args.max_jobs]
+            handles = [
+                executor.submit(
+                    convert_conversation_batch, job_id=job_id, batch=batch, args=args
+                )
+                for job_id, batch in subbatches
+            ]
 
-        random.seed(seed)  # Randomized load balancing
-        random.shuffle(batches)
-
-        batches = _split(batches, int(ray.available_resources()["CPU"]))
-
-    # launch remote workers
-    handles = [convert_conversation_batch.remote(
-        model_type=model_type,  # type: ignore
-        model_path=model_path,
-        batch=batch,
-        schema=schema,
-        per_sequence_loss=per_sequence_loss
-    ) for batch in batches]
+            # Collecting
+            for handle in concurrent.futures.as_completed(handles):
+                output, job_id = handle.result()
+                outputs[job_id] = output
+                job_print(job_id, "Collect result is done")
+        outputs = [d for output in outputs for d in output]
 
     # write
-    parquet.write_table(pyarrow.concat_tables([ray.get(handle) for handle in handles]), out_filename)
+    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
+    parquet.write_table(
+        pyarrow.Table.from_pylist(outputs, schema=schema),
+        f"{args.out_prefix}.{split_name}.parquet",
+    )
+    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
 
 
-def generate_dataset(model_type, model_path, in_prefix, out_prefix, per_sequence_loss, seed):
-    # Initialize Ray
-    if not ray.is_initialized():
-        ray.init(ignore_reinit_error=True, num_cpus=os.cpu_count())
+def generate_dataset(args: DataArguments):
+    # Load conversations
+    conversations = []
+    for filename in args.in_files:
+        with open(filename, "rt") as f:
+            conversations.extend(f.readlines())
 
-    # Load epochs and tokenize
-    epoch = 0
-    while True:
-        in_filename = f"{in_prefix}.{epoch}.jsonl"
-        if not os.path.exists(in_filename):
-            break
+    # Train-test split
+    random.seed(args.seed)
+    random.shuffle(conversations)
+    eval_num = int(args.eval_ratio * len(conversations))
 
-        out_filename = f"{out_prefix}.{epoch}.parquet"
-        generate_epoch(
-            seed=seed + epoch,
-            model_type=model_type,
-            model_path=model_path,
-            in_filename=in_filename,
-            out_filename=out_filename,
-            per_sequence_loss=per_sequence_loss
-        )
-        gc.collect()
+    train_conversations = conversations[eval_num:]
+    eval_conversations = conversations[:eval_num]
 
-        epoch += 1
+    generate_split(train_conversations, "train", args)
+    if eval_num > 0:
+        generate_split(eval_conversations, "eval", args)
 
 
 if __name__ == "__main__":
@@ -179,11 +259,24 @@ if __name__ == "__main__":
     parser.add_argument("--model-type", type=str, required=True)
     parser.add_argument("--model-path", type=str, required=True)
 
-    parser.add_argument("--in-prefix", type=str, required=True)
+    parser.add_argument("--in-files", type=str, nargs="+", required=True)
     parser.add_argument("--out-prefix", type=str, required=True)
 
     parser.add_argument("--per-sequence-loss", action="store_true")
+    parser.add_argument("--force-eos-token", action="store_true")
+    parser.add_argument("--eos-final", action="store_true")
+    parser.add_argument("--max-seq-length", type=int, default=None)
+    parser.add_argument("--ignore-index", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--eval-ratio", type=float, default=0.0)
+    parser.add_argument("--data-length-multiple-of", type=int, default=1)
+    parser.add_argument("--pretokenized-in-files", action="store_true")
+    parser.add_argument("--pretraining-data", action="store_true")
+    parser.add_argument("--ignore-last-token", action="store_true")
+    parser.add_argument("--max-workers", type=int, default=None)
+    parser.add_argument("--max-jobs", type=int, default=10)
     args = parser.parse_args()
 
-    generate_dataset(**vars(args))
+    args = DataArguments(**vars(args))
+
+    generate_dataset(args)

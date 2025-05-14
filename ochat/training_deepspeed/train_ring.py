@@ -23,17 +23,13 @@ from ochat.training_deepspeed.utils import (
     clean_checkpoint,
     save_tokenizer,
 )
-from ochat.training_deepspeed.multipack_dataloader import (
+from ochat.training_deepspeed.multipack_dataloader_ring import (
     MultipackDistributedDataloader,
 )
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
-from ochat.training_deepspeed.train_lora import (
+from ochat.training_deepspeed.train_ring_lora import (
     TrainingArguments as LoraTrainingArguments,
     train as lora_train,
-)
-from ochat.training_deepspeed.train_ring import (
-    train as train_ring,
-    lora_train as lora_train_ring,
 )
 
 from transformers.integrations import HfDeepSpeedConfig
@@ -93,13 +89,8 @@ class TrainingArguments(BaseModel):
         return v
 
 
-def parse_args() -> (
-    Tuple[
-        argparse.Namespace, argparse.Namespace, argparse.Namespace, argparse.Namespace
-    ]
-):
+def parse_args() -> Tuple[argparse.Namespace, argparse.Namespace, argparse.Namespace]:
     parser_base = argparse.ArgumentParser(add_help=False)
-    parser_ring_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
     # Distributed
@@ -150,9 +141,6 @@ def parse_args() -> (
     parser_base.add_argument("--experiment_name", type=str, required=True)
     parser_base.add_argument("--run_name", type=str, required=True)
 
-    # RING
-    parser_ring_confirm.add_argument("--use_ring", action="store_true")
-
     # LORA
     parser_lora_confirm.add_argument("--use_lora", action="store_true")
     parser_lora.add_argument("--lora_alpha", type=int, default=32)
@@ -178,16 +166,15 @@ def parse_args() -> (
 
     # Group parser
     parser_group = argparse.ArgumentParser(
-        parents=[parser_base, parser_ring_confirm, parser_lora_confirm, parser_lora]
+        parents=[parser_base, parser_lora_confirm, parser_lora]
     )
 
     # Parse known args
     parser_group.parse_args()
     args_base, _ = parser_base.parse_known_args()
-    args_ring_confirm, _ = parser_ring_confirm.parse_known_args()
     args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
     args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_ring_confirm, args_lora_confirm, args_lora
+    return args_base, args_lora_confirm, args_lora
 
 
 def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
@@ -195,7 +182,6 @@ def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
     return MultipackDistributedDataloader(
         dataset=data,
         lengths=data["total_length"],
-        numseqs=data["num_seqs"],
         batch_max_length=args.batch_max_len,
         collate_fn=batch_to_tensor,
         seed=0,
@@ -332,7 +318,7 @@ def train(args: TrainingArguments):
         print(f"[rank {RANK}]: Epoch {epoch}")
 
         train_loader.set_epoch(epoch)
-        for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
+        for (batch_tensor, batch_info), total_seqs in train_loader:
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
@@ -351,7 +337,7 @@ def train(args: TrainingArguments):
             loss, acc = model_engine(
                 **batch_tensor,
                 **batch_info,
-                num_seq=all_numseq,
+                total_seqs=total_seqs,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
@@ -371,14 +357,15 @@ def train(args: TrainingArguments):
 
             model_engine.step()
 
+            dist.reduce(loss, 0)
+            dist.reduce(acc, 0)
+
             # Logging
             if RANK == 0:
                 mlflow.log_metrics(
                     metrics={
-                        "train/loss": (loss.item() - aux_loss.item())
-                        * (all_numseq / cur_numseq)
-                        + aux_loss.item(),
-                        "train/acc": acc.item() * (all_numseq / cur_numseq),
+                        "train/loss": loss.item(),
+                        "train/acc": acc.item(),
                         "train/lr": lr_this_step,
                         "train/epoch": args.epochs * step / train_total_steps,
                     },
@@ -424,10 +411,7 @@ def train(args: TrainingArguments):
 
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
-                    for (
-                        batch_tensor,
-                        batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    for (batch_tensor, batch_info), total_seqs in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -438,7 +422,7 @@ def train(args: TrainingArguments):
                         eval_loss, eval_acc = model_engine(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            total_seqs=total_seqs,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -521,10 +505,7 @@ def train(args: TrainingArguments):
 
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
-                    for (
-                        batch_tensor,
-                        batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    for (batch_tensor, batch_info), total_seqs in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -535,7 +516,7 @@ def train(args: TrainingArguments):
                         eval_loss, eval_acc = model_engine(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            total_seqs=total_seqs,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -603,7 +584,7 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args, args_ring_confirm, args_lora_confirm, args_lora = parse_args()
+    args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
     with open(args.deepspeed_config) as f:
         deepspeed_config: dict = json.load(f)
@@ -618,11 +599,6 @@ if __name__ == "__main__":
         args = LoraTrainingArguments(**args)
         if args.ds_offload:
             args.use_qlora = False
-        if args_ring_confirm.use_ring:
-            lora_train_ring(args)
-        else:
-            lora_train(args)
-    elif args_ring_confirm.use_ring:
-        train_ring(args)
+        lora_train(args)
     else:
         train(args)

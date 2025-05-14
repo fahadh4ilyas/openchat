@@ -1,3 +1,31 @@
+from ochat.models.unpadded_deepseekv2 import DeepseekV2ForCausalLM
 from ochat.models.unpadded_llama import LlamaForCausalLM
+from ochat.models.unpadded_llama_split import LlamaForCausalLM as LlamaSplitForCausalLM
+from ochat.models.unpadded_llama_long import LlamaForCausalLM as LlamaLongForCausalLM
+from ochat.models.unpadded_llama_ring import LlamaForCausalLM as LlamaRingForCausalLM
+from ochat.models.unpadded_llama_long_ring import (
+    LlamaForCausalLM as LlamaLongRingForCausalLM,
+)
 from ochat.models.unpadded_mistral import MistralForCausalLM
+from ochat.models.unpadded_mistral_split import (
+    MistralForCausalLM as MistralSplitForCausalLM,
+)
+from ochat.models.unpadded_mistral_long import (
+    MistralForCausalLM as MistralLongForCausalLM,
+)
+from ochat.models.unpadded_mistral_ring import (
+    MistralForCausalLM as MistralRingForCausalLM,
+)
+from ochat.models.unpadded_mixtral import MixtralForCausalLM
+from ochat.models.unpadded_mixtral_ring import (
+    MixtralForCausalLM as MixtralRingForCausalLM,
+)
 from ochat.models.unpadded_gemma import GemmaForCausalLM
+from ochat.models.unpadded_gemma2 import Gemma2ForCausalLM
+from ochat.models.unpadded_gemma_ring import GemmaForCausalLM as GemmaRingForCausalLM
+from ochat.models.unpadded_phi import PhiForCausalLM
+from ochat.models.unpadded_phi_ori import PhiForCausalLM as OriPhiForCausalLM
+from ochat.models.unpadded_qwen2 import Qwen2ForCausalLM
+from ochat.models.unpadded_qwen2_ring import Qwen2ForCausalLM as Qwen2RingForCausalLM
+from ochat.models.unpadded_qwen3 import Qwen3ForCausalLM
+from ochat.models.unpadded_qwen3_ring import Qwen3ForCausalLM as Qwen3RingForCausalLM
