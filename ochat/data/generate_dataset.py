@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime
 import random
 
+from prometheus_client import h
 from pydantic import BaseModel, Field
 
 import concurrent
@@ -34,6 +35,7 @@ class DataArguments(BaseModel):
     pretokenized_in_files: bool = Field(False)
     pretraining_data: bool = Field(False)
     ignore_last_token: bool = Field(False)
+    separate_think: bool = Field(False)
     max_workers: Optional[int] = Field(None)
     max_jobs: int = Field(10)
 
@@ -167,6 +169,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
                 seq_level_weight=args.per_sequence_loss,
                 force_eos_token=args.force_eos_token,
                 eos_final=args.eos_final,
+                separate_think=args.separate_think,
             )
 
     # Generate data
@@ -262,17 +265,18 @@ if __name__ == "__main__":
     parser.add_argument("--in-files", type=str, nargs="+", required=True)
     parser.add_argument("--out-prefix", type=str, required=True)
 
-    parser.add_argument("--per-sequence-loss", action="store_true")
-    parser.add_argument("--force-eos-token", action="store_true")
-    parser.add_argument("--eos-final", action="store_true")
-    parser.add_argument("--max-seq-length", type=int, default=None)
-    parser.add_argument("--ignore-index", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--eval-ratio", type=float, default=0.0)
-    parser.add_argument("--data-length-multiple-of", type=int, default=1)
-    parser.add_argument("--pretokenized-in-files", action="store_true")
-    parser.add_argument("--pretraining-data", action="store_true")
-    parser.add_argument("--ignore-last-token", action="store_true")
+    parser.add_argument("--per-sequence-loss", action="store_true", help="If true, the total weight of the sequence is divided by the number of tokens in the sequence. If false, the total weight is used as is.")
+    parser.add_argument("--force-eos-token", action="store_true", help="If true, the EOS token is added at the end of every sequence with non zero weight.")
+    parser.add_argument("--eos-final", action="store_true", help="If true, the EOS token is added to the very end of the sequence, even if the last token is not a EOS token.")
+    parser.add_argument("--max-seq-length", type=int, default=None, help="If specified, the sequence is truncated to this length. If not specified, the maximum context length of the model is used.")
+    parser.add_argument("--ignore-index", type=int, default=0, help="The value used to pad the labels. If 0, the PAD_TOKEN_ID is used which is 0.")
+    parser.add_argument("--seed", type=int, default=42, help="The seed used to shuffle the data.")
+    parser.add_argument("--eval-ratio", type=float, default=0.0, help="The ratio of the data used for evaluation. If 0.0, no evaluation data is generated.")
+    parser.add_argument("--data-length-multiple-of", type=int, default=1, help="The length of the data is a multiple of this value. If 1, no padding is done.")
+    parser.add_argument("--pretokenized-in-files", action="store_true", help="If true, the input files are pretokenized. If false, the input files are not pretokenized.")
+    parser.add_argument("--pretraining-data", action="store_true", help="If true, the input files are pretraining data. If false, the input files are not pretraining data.")
+    parser.add_argument("--ignore-last-token", action="store_true", help="If true, the last token of sequence is ignored. If false, the labels will be padded to match the input sequence.")
+    parser.add_argument("--separate-think", action="store_true", help="If true, if the sequence contains a think token, the sequence will be separated into multiple sequences with thinking only on the end of the sequence. If false, the sequence will be treated as a single sequence.")
     parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--max-jobs", type=int, default=10)
     args = parser.parse_args()

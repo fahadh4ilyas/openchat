@@ -231,38 +231,77 @@ class ChatMLConversationTemplate(BaseModel):
         ).input_ids
 
     def _convert_to_chatml(
-        self, conversation: Conversation, default_condition: str = ""
-    ) -> List[ChatMLMessage]:
-        prompts = []
-        if conversation.system:
-            prompts.append(
-                ChatMLMessage(
-                    message=self.prompt_format.format(
-                        role="system", text=conversation.system
-                    ),
-                    weight=0.0,
-                )
-            )
+        self, conversation: Conversation, default_condition: str = "", separate_think: bool = False
+    ) -> List[List[ChatMLMessage]]:
+        list_prompts = []
 
-        for message in conversation.items:
-            role = message.role
-            if message.name is not None:
-                role = message.name
-            prompts.append(
-                ChatMLMessage(
-                    message=self.prompt_format.format(
-                        role=self.role_prefix(
-                            role,
-                            conversation.condition or default_condition,
-                            self.model,
+        if separate_think:
+            weighted_indices = [i for i, msg in enumerate(conversation.items) if msg.weight is not None and msg.weight != 0 and '<think>' in msg.content]
+
+            for idx in weighted_indices:
+                temp_conversation_items = [item.model_copy(update={'weight': 0.0}, deep=True) for item in conversation.items[:idx]] + [conversation.items[idx].model_copy(deep=True)]
+                temp_conversation = Conversation(items=temp_conversation_items, condition=conversation.condition, system=conversation.system)
+
+                prompts = []
+                if temp_conversation.system:
+                    prompts.append(
+                        ChatMLMessage(
+                            message=conversation.system,
+                            weight=0.0,
+                        )
+                    )
+                
+                for message in temp_conversation.items:
+                    role = message.role
+                    if role not in ['user', 'assistant']:
+                        raise ValueError(f"Role {role} is not supported")
+                    weight = message.weight
+                    if role == 'assistant' and weight == 0 and '<think>' in message.content:
+                        content = message.content.split('</think>')[-1]
+                    else:
+                        content = message.content
+                    prompts.append(
+                        ChatMLMessage(
+                            message=self.prompt_format[role].format(
+                                role=role.title(),
+                                text=content.strip(),
+                            ),
+                            weight=weight,
+                        )
+                    )
+                list_prompts.append(prompts)
+        else:
+            prompts = []
+            if conversation.system:
+                prompts.append(
+                    ChatMLMessage(
+                        message=self.prompt_format.format(
+                            role="system", text=conversation.system
                         ),
-                        text=message.content.strip(),
-                    ),
-                    weight=message.weight,
+                        weight=0.0,
+                    )
                 )
-            )
 
-        return prompts
+            for message in conversation.items:
+                role = message.role
+                if message.name is not None:
+                    role = message.name
+                prompts.append(
+                    ChatMLMessage(
+                        message=self.prompt_format.format(
+                            role=self.role_prefix(
+                                role,
+                                conversation.condition or default_condition,
+                                self.model,
+                            ),
+                            text=message.content.strip(),
+                        ),
+                        weight=message.weight,
+                    )
+                )
+            list_prompts.append(prompts)
+
+        return list_prompts
 
     def tokenize_conversations(
         self,
@@ -271,11 +310,12 @@ class ChatMLConversationTemplate(BaseModel):
         seq_level_weight: bool = False,
         force_eos_token: bool = False,
         eos_final: bool = False,
+        separate_think: bool = False,
     ):
         default_condition = self.inference_condition if inference else ""
 
         chatml_conversations = [
-            self._convert_to_chatml(conv, default_condition) for conv in conversations
+            c for conv in conversations for c in self._convert_to_chatml(conv, default_condition, separate_think)
         ]
         all_text = [msg.message for conv in chatml_conversations for msg in conv]
         text_mapping = dict(zip(all_text, self._safe_tokenize(all_text)))
