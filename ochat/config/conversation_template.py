@@ -257,7 +257,7 @@ class ChatMLConversationTemplate(BaseModel):
                         raise ValueError(f"Role {role} is not supported")
                     weight = message.weight
                     if role == 'assistant' and weight == 0 and '<think>' in message.content:
-                        content = message.content.split('</think>')[-1]
+                        content = message.content.split('</think>')[-1].lstrip()
                     else:
                         content = message.content
                     prompts.append(
@@ -427,7 +427,7 @@ class DeepseekConversationTemplate(BaseModel):
                     raise ValueError(f"Role {role} is not supported")
                 weight = message.weight
                 if role == 'assistant' and weight == 0 and '<think>' in message.content:
-                    content = message.content.split('</think>')[-1]
+                    content = message.content.split('</think>')[-1].lstrip()
                 else:
                     content = message.content
                 prompts.append(
