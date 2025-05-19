@@ -5,12 +5,11 @@ Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokeni
 """
 
 import concurrent.futures
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import argparse
 from datetime import datetime
 import random
 
-from prometheus_client import h
 from pydantic import BaseModel, Field
 
 import concurrent
