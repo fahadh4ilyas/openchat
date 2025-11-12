@@ -175,10 +175,9 @@ def create_model(args: TrainingArguments):
     model_path = get_latest_checkpoint(args) or args.model_path
 
     # Create model + optimizer + lr scheduler
-    if model_path == args.model_path:
-        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
-            model_path, low_cpu_mem_usage=True
-        )
+    model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
+        model_path, low_cpu_mem_usage=True
+    )
     # Model to assigned cuda device
     model = model.to("cuda")
     # Enable gradient checkpointing
