@@ -1,0 +1,493 @@
+import argparse
+import os
+from typing import Optional, Union, Literal, Tuple
+
+from pydantic import BaseModel, Field, field_validator as validator
+
+import torch
+
+import tqdm
+import mlflow
+
+from ochat.config import MODEL_CONFIG_MAP
+from ochat.training_deepspeed.utils import (
+    mlflow_stopper_wrapper,
+    batch_to_tensor,
+    get_latest_checkpoint,
+    create_dataset,
+    calculate_auto_lr,
+    create_lr_scheduler,
+    save_openchat_metadata,
+    clean_checkpoint,
+    save_tokenizer,
+)
+from ochat.training_deepspeed.multipack_dataloader_single import MultipackDataloader
+from ochat.training_deepspeed.numpy_dataset import NumpyDataset
+
+from ochat.training_deepspeed.train_lora_single import (
+    TrainingArguments as LoraTrainingArguments,
+    train as lora_train,
+)
+
+
+class TrainingArguments(BaseModel):
+    model_path: str = Field(...)
+    model_type: Optional[str] = Field(None)
+    data_prefix: str = Field(...)
+    save_path: str = Field(...)
+    save_every: Optional[int] = Field(None, gt=0)
+    save_strategy: Union[Literal["epoch"], Literal["step"]] = Field("epoch")
+    checkpoint_every: int = Field(0, ge=0)
+    max_checkpoint: int = Field(1, gt=0)
+    eval_every: Optional[int] = Field(None, gt=0)
+    eval_strategy: Union[Literal["epoch"], Literal["step"]] = Field("epoch")
+    batch_max_len: int = Field(81920)
+    epochs: int = Field(5)
+    max_steps: int = Field(0)
+    base_lr: float = Field(3e-4)
+    lr: Optional[float] = Field(None)
+    lr_min_ratio: float = Field(0.1)
+    lr_warmup_ratio: float = Field(0.05)
+    lr_warmup_step: int = Field(0)
+    weight_decay: float = Field(0.1)
+    beta1: float = Field(0.9)
+    beta2: float = Field(0.95)
+    eps: float = Field(1e-5)
+    use_fast_norm: bool = Field(False)
+    use_fast_rope: bool = Field(False)
+    tracking_uri: Optional[str] = Field(None)
+    mlflow_username: Optional[str] = Field(None)
+    mlflow_password: Optional[str] = Field(None)
+    experiment_name: str = Field(...)
+    run_name: str = Field(...)
+    device: Optional[str] = Field(None)
+
+    @validator("batch_max_len")
+    def val_batch_size(cls, v: int) -> int:
+        if v % 2048 != 0:
+            raise ValueError("`batch_max_len` must be multiple of 2048")
+
+        return v
+
+
+def parse_args() -> (
+    Tuple[
+        argparse.Namespace, argparse.Namespace, argparse.Namespace
+    ]
+):
+    parser_base = argparse.ArgumentParser()
+    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
+    parser_lora = argparse.ArgumentParser(add_help=False)
+
+    # Model type and data
+    parser_base.add_argument("--model_path", type=str, required=True)
+    parser_base.add_argument("--data_prefix", type=str, required=True)
+    parser_base.add_argument("--save_path", type=str, required=True)
+    parser_base.add_argument(
+        "--save_strategy", type=str, choices=["epoch", "step"], default="epoch"
+    )
+    parser_base.add_argument("--save_every", type=int, default=None)
+    parser_base.add_argument("--checkpoint_every", type=int, default=0)
+    parser_base.add_argument("--max_checkpoint", type=int, default=1)
+    parser_base.add_argument(
+        "--eval_strategy", type=str, choices=["epoch", "step"], default="epoch"
+    )
+    parser_base.add_argument("--eval_every", type=int, default=None)
+
+    # Hyperparameters
+    parser_base.add_argument("--batch_max_len", type=int, default=81920)
+    parser_base.add_argument("--epochs", type=int, default=5)
+    parser_base.add_argument("--max_steps", type=int, default=0)
+
+    # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
+    parser_base.add_argument("--base_lr", type=float, default=3e-4)
+    parser_base.add_argument("--lr", type=float, default=None)
+    parser_base.add_argument("--lr_min_ratio", type=float, default=0.1)
+    parser_base.add_argument("--lr_warmup_ratio", type=float, default=0.05)
+    parser_base.add_argument("--lr_warmup_step", type=int, default=0)
+
+    parser_base.add_argument("--weight_decay", type=float, default=0.1)
+
+    parser_base.add_argument("--beta1", type=float, default=0.9)
+    parser_base.add_argument("--beta2", type=float, default=0.95)
+    parser_base.add_argument("--eps", type=float, default=1e-5)
+
+    # FAST FORWARD
+    parser_base.add_argument("--use_fast_norm", action="store_true")
+    parser_base.add_argument("--use_fast_rope", action="store_true")
+
+    # MLFLOW
+    parser_base.add_argument("--tracking_uri", type=str, default=None)
+    parser_base.add_argument("--mlflow_username", type=str, default=None)
+    parser_base.add_argument("--mlflow_password", type=str, default=None)
+    parser_base.add_argument("--experiment_name", type=str, required=True)
+    parser_base.add_argument("--run_name", type=str, required=True)
+
+    # LORA
+    parser_lora_confirm.add_argument("--use_lora", action="store_true")
+    parser_lora.add_argument("--lora_alpha", type=int, default=32)
+    parser_lora.add_argument("--lora_r", type=int, default=32)
+    parser_lora.add_argument("--lora_dropout", type=float, default=0.05)
+    parser_lora.add_argument(
+        "--lora_target_modules",
+        type=str,
+        nargs="*",
+        default=["q_proj", "k_proj", "v_proj", "o_proj"],
+    )
+    parser_lora.add_argument("--lora_bias", type=str, default="none")
+    parser_lora.add_argument("--modules_to_save", type=str, nargs="*", default=None)
+
+    # QLORA
+    parser_lora.add_argument("--use_qlora", action="store_true")
+    parser_lora.add_argument("--quant_bits", type=int, default=4)
+    parser_lora.add_argument("--quant_type_4bit", type=str, default="nf4")
+    parser_lora.add_argument("--use_double_quant_4bit", action="store_true")
+
+    # Group parser
+    parser_group = argparse.ArgumentParser(
+        parents=[parser_base, parser_lora_confirm, parser_lora]
+    )
+
+    # Parse known args
+    parser_group.parse_args()
+    args_base, _ = parser_base.parse_known_args()
+    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
+    args_lora, _ = parser_lora.parse_known_args()
+    return args_base, args_lora_confirm, args_lora
+
+
+def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
+    # Multipack dataloader
+    return MultipackDataloader(
+        dataset=data,
+        lengths=data["total_length"],
+        numseqs=data["num_seqs"],
+        batch_max_length=args.batch_max_len,
+        collate_fn=batch_to_tensor,
+        seed=0,
+    )
+
+
+def create_model(args: TrainingArguments):
+    print(f"Loading model {args.model_type} from {args.model_path}...")
+
+    # get checkpoint
+    model_path = get_latest_checkpoint(args) or args.model_path
+
+    # Create model + optimizer + lr scheduler
+    if model_path == args.model_path:
+        model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
+            model_path, low_cpu_mem_usage=True
+        )
+    # Model to assigned cuda device
+    model = model.to("cuda")
+    # Enable gradient checkpointing
+    model.gradient_checkpointing_enable()
+
+    # Optimizer
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        betas=(args.beta1, args.beta2),
+        eps=args.eps,
+        fused=True,
+    )
+
+    # Save device location
+    args.device = model.device
+
+    return model, optimizer
+
+
+@mlflow_stopper_wrapper
+def train(args: TrainingArguments):
+    # Dataset
+    train_dataset = create_dataset(args, "train")
+    eval_dataset = create_dataset(args, "eval")
+
+    if train_dataset is None:
+        raise RuntimeError("Training data not found.")
+
+    # Load model type
+    args.model_type = train_dataset.metadata["model_type"]
+
+    # Data Loader
+    train_loader = create_distributed_dataloader(args, train_dataset)
+    if args.max_steps > 0:
+        args.epochs = -(-args.max_steps // train_loader.num_batches())
+        train_total_steps = args.max_steps
+    else:
+        train_total_steps = args.epochs * train_loader.num_batches()
+
+    eval_loader = None
+    if eval_dataset is not None:
+        eval_loader = create_distributed_dataloader(args, eval_dataset)
+
+    # Hyperparams
+    args.lr = calculate_auto_lr(
+        args.base_lr, args.lr, args.batch_max_len, args.model_type, train_dataset
+    )
+
+    # Logger
+    if args.tracking_uri:
+        mlflow.set_tracking_uri(args.tracking_uri)
+    if args.mlflow_username:
+        os.environ["MLFLOW_TRACKING_USERNAME"] = args.mlflow_username
+    if args.mlflow_password:
+        os.environ["MLFLOW_TRACKING_PASSWORD"] = args.mlflow_password
+    mlflow.set_experiment(args.experiment_name)
+    mlflow.start_run(run_name=args.run_name)
+    metadata = vars(args).copy()
+    metadata.pop("local_rank", None)
+    metadata.pop("device", None)
+    metadata["steps"] = train_total_steps
+    mlflow.log_params(metadata)
+
+    # Model
+    model, optimizer = create_model(args)
+
+    # LR Scheduler
+    lr_scheduler = create_lr_scheduler(args, train_total_steps)
+
+    # Progress bar
+    progress_bar = tqdm.tqdm(total=train_total_steps)
+
+    # Training Loop
+    step = 0
+    latest_checkpoint = int((get_latest_checkpoint(args) or "_0").split("_")[-1])
+    lr_this_step = None
+    model.train()
+    eval_epoch = 0
+    for epoch in range(args.epochs):
+        print(f"Epoch {epoch}")
+
+        train_loader.set_epoch(epoch)
+        for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
+            step += 1
+            if step > train_total_steps:  # At most train_total_steps
+                break
+            elif step <= latest_checkpoint:
+                progress_bar.update()
+                continue
+
+            optimizer.zero_grad()
+
+            # To device
+            batch_tensor = {
+                k: (v.to(args.device) if v is not None else None)
+                for k, v in batch_tensor.items()
+            }
+
+            # Update
+            loss, acc = model(
+                **batch_tensor,
+                **batch_info,
+                num_seq=all_numseq,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).loss
+
+            if isinstance(loss, tuple):
+                loss, aux_loss = loss
+            else:
+                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+
+            loss.backward()
+
+            # Set LR
+            lr_this_step = args.lr * lr_scheduler(step)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr_this_step
+
+            optimizer.step()
+
+            # Logging
+            mlflow.log_metrics(
+                metrics={
+                    "train/loss": (loss.item() - aux_loss.item())
+                    * (all_numseq / cur_numseq)
+                    + aux_loss.item(),
+                    "train/acc": acc.item() * (all_numseq / cur_numseq),
+                    "train/lr": lr_this_step,
+                    "train/epoch": args.epochs * step / train_total_steps,
+                },
+                step=step,
+            )
+            progress_bar.update()  # type: ignore
+
+            if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
+                save_path = os.path.join(args.save_path, f"checkpoint_{step}")
+
+                model.save_pretrained(save_path)  # type: ignore
+
+                # Write metadata
+                save_openchat_metadata(args, epoch + 1, step, save_path)
+
+                clean_checkpoint(args)
+
+            if eval_loader is not None and (
+                args.eval_strategy == "step"
+                and args.eval_every
+                and (step % args.eval_every == 0)
+            ):
+                model.eval()
+
+                eval_total_metric = torch.zeros(
+                    (2,), dtype=torch.float32, device=args.device
+                )
+                eval_total_steps = 0
+
+                eval_loader.set_epoch(eval_epoch)
+                with torch.inference_mode():
+                    for (
+                        batch_tensor,
+                        batch_info,
+                    ), all_numseq, cur_numseq in eval_loader:
+                        # To device
+                        batch_tensor = {
+                            k: (v.to(args.device) if v is not None else None)
+                            for k, v in batch_tensor.items()
+                        }
+
+                        # Eval
+                        eval_loss, eval_acc = model(
+                            **batch_tensor,
+                            **batch_info,
+                            num_seq=all_numseq,
+                            use_fast_norm=args.use_fast_norm,
+                            use_fast_rope=args.use_fast_rope,
+                        ).loss
+
+                        if isinstance(eval_loss, tuple):
+                            eval_loss, _ = eval_loss
+
+                        # Accumulate eval loss
+                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+                        eval_total_steps += 1
+
+                # Gather eval loss (reduce sum)
+                eval_total_metric.div_(eval_total_steps)
+
+                eval_epoch += 1
+
+                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                mlflow.log_metrics(
+                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
+                )
+
+                model.train()
+
+            if (
+                args.save_strategy == "step"
+                and args.save_every
+                and (step % args.save_every == 0)
+            ):
+                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
+
+                model.save_pretrained(save_path)  # type: ignore
+
+                # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
+
+                # Write metadata
+                save_openchat_metadata(
+                    args, args.epochs * step / train_total_steps, step, save_path
+                )
+
+        if step > latest_checkpoint:
+            # Log batch efficiency
+            mlflow.log_metrics(
+                metrics={"batch_efficiency": train_loader.efficiency()}, step=step
+            )
+
+            if eval_loader is not None and (
+                (step == train_total_steps)
+                or (epoch + 1 == args.epochs)
+                or (
+                    args.eval_strategy == "epoch"
+                    and args.eval_every
+                    and ((epoch + 1) % args.eval_every == 0)
+                )
+            ):
+                model.eval()
+
+                eval_total_metric = torch.zeros(
+                    (2,), dtype=torch.float32, device=args.device
+                )
+                eval_total_steps = 0
+
+                eval_loader.set_epoch(eval_epoch)
+                with torch.inference_mode():
+                    for (
+                        batch_tensor,
+                        batch_info,
+                    ), all_numseq, cur_numseq in eval_loader:
+                        # To device
+                        batch_tensor = {
+                            k: (v.to(args.device) if v is not None else None)
+                            for k, v in batch_tensor.items()
+                        }
+
+                        # Eval
+                        eval_loss, eval_acc = model(
+                            **batch_tensor,
+                            **batch_info,
+                            num_seq=all_numseq,
+                            use_fast_norm=args.use_fast_norm,
+                            use_fast_rope=args.use_fast_rope,
+                        ).loss
+
+                        if isinstance(eval_loss, tuple):
+                            eval_loss, _ = eval_loss
+
+                        # Accumulate eval loss
+                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+                        eval_total_steps += 1
+
+                # Gather eval loss (reduce sum)
+                eval_total_metric.div_(eval_total_steps)
+
+                eval_epoch += 1
+
+                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                mlflow.log_metrics(
+                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
+                )
+
+                model.train()
+
+            ############ Save Checkpoint
+            # Save model with lean state dict
+            # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
+            if (
+                (step == train_total_steps)
+                or (epoch + 1 == args.epochs)
+                or (
+                    args.save_strategy == "epoch"
+                    and args.save_every
+                    and ((epoch + 1) % args.save_every == 0)
+                )
+            ):
+                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
+
+                model.save_pretrained(save_path)  # type: ignore
+
+                # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
+
+                # Write metadata
+                save_openchat_metadata(args, epoch + 1, step, save_path)
+
+    mlflow.end_run()
+
+
+if __name__ == "__main__":
+    args, args_lora_confirm, args_lora = parse_args()
+    args = TrainingArguments(**vars(args))
+    if args_lora_confirm.use_lora or args_lora.use_qlora:
+        args = {**args.model_dump(), **vars(args_lora)}
+        args = LoraTrainingArguments(**args)
+        lora_train(args)
+    else:
+        train(args)
