@@ -3,7 +3,7 @@ import os
 import json
 from typing import Optional, Union, Literal, List
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator as validator
 
 import torch
 import torch.distributed as dist
