@@ -17,7 +17,7 @@ class NumpyDataset:
             self.metadata = data["metadata"]
         elif dataset_filename.endswith(".parquet"):
             # Convert parquet to numpy for fast random access
-            table = pq.read_table(f"{dataset_filename}.parquet", memory_map=True)
+            table = pq.read_table(dataset_filename, memory_map=True)
             self.dataset = {
                 k: v.to_numpy() for k, v in zip(table.column_names, table.columns)
             }
