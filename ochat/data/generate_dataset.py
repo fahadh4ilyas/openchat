@@ -39,6 +39,7 @@ class DataArguments(BaseModel):
     max_workers: Optional[int] = Field(None)
     max_jobs: int = Field(10)
     split_files: bool = Field(False)
+    num_splits: int = Field(10)
 
     @validator("max_jobs")
     def check_max_jobs(cls, v, info: ValidationInfo):
@@ -217,7 +218,7 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=args.max_workers
     ) as executor:
-        batches = list(enumerate(_split(conversations, executor._max_workers)))
+        batches = list(enumerate(_split(conversations, args.num_splits)))
         if not args.split_files:
             outputs = [None] * len(batches)
         for i in range(0, len(batches), args.max_jobs):
@@ -299,7 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--separate-think", action="store_true", help="If true, if the sequence contains a think token, the sequence will be separated into multiple sequences with thinking only on the end of the sequence. If false, the sequence will be treated as a single sequence.")
     parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--max-jobs", type=int, default=10)
-    parser.add_argument("--split-files", action="store_true", help="If true, the input files are split into multiple files for processing based on max_workers. If false, the input files are processed as a single file.")
+    parser.add_argument("--num-splits", type=int, default=10, help="Number of split jobs to create.")
+    parser.add_argument("--split-files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))
