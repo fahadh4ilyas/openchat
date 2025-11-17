@@ -316,9 +316,7 @@ def train(args: TrainingArguments):
             ).loss
 
             if isinstance(loss, tuple):
-                loss, aux_loss = loss
-            else:
-                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+                loss, _ = loss
 
             loss.backward()
 
