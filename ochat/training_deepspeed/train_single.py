@@ -262,7 +262,7 @@ def train(args: TrainingArguments):
         print(f"Epoch {epoch}")
 
         train_loader.set_epoch(epoch)
-        for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
+        for (batch_tensor, batch_info), num_seq in train_loader:
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
@@ -282,7 +282,7 @@ def train(args: TrainingArguments):
             loss, acc = model(
                 **batch_tensor,
                 **batch_info,
-                num_seq=all_numseq,
+                num_seq=num_seq,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
@@ -304,10 +304,8 @@ def train(args: TrainingArguments):
             # Logging
             mlflow.log_metrics(
                 metrics={
-                    "train/loss": (loss.item() - aux_loss.item())
-                    * (all_numseq / cur_numseq)
-                    + aux_loss.item(),
-                    "train/acc": acc.item() * (all_numseq / cur_numseq),
+                    "train/loss": loss.item(),
+                    "train/acc": acc.item(),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps,
                 },
@@ -342,7 +340,7 @@ def train(args: TrainingArguments):
                     for (
                         batch_tensor,
                         batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    ), num_seq in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -353,7 +351,7 @@ def train(args: TrainingArguments):
                         eval_loss, eval_acc = model(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            num_seq=num_seq,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -421,7 +419,7 @@ def train(args: TrainingArguments):
                     for (
                         batch_tensor,
                         batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    ), num_seq in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -432,7 +430,7 @@ def train(args: TrainingArguments):
                         eval_loss, eval_acc = model(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            num_seq=num_seq,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss

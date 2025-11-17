@@ -160,7 +160,6 @@ class MultipackDataloader:
             n=1,
         )
 
-        curseqs = [np.sum(numseqs[batch]) for batch in batches]
         batches = [indices[batch] for batch in batches]
 
         # statistics
@@ -168,16 +167,16 @@ class MultipackDataloader:
             self.eff_total_used += total_used
             self.eff_total_slots += total_slots
 
-        return batches, totseqs, curseqs
+        return batches, totseqs
 
     def __iter__(self):
-        all_batches, all_totseqs, all_curseqs = self.generate_batches(set_stats=True)
+        all_batches, all_totseqs = self.generate_batches(set_stats=True)
 
-        for batch, totseq, curseq in zip(all_batches, all_totseqs, all_curseqs):
-            yield self.collate_fn(self.dataset[batch]), totseq, curseq
+        for batch, totseq in zip(all_batches, all_totseqs):
+            yield self.collate_fn(self.dataset[batch]), totseq
 
     def num_batches(self) -> int:
-        batches, _, _ = self.generate_batches()
+        batches, _ = self.generate_batches()
         return len(batches)
 
     def efficiency(self) -> float:
