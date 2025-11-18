@@ -487,6 +487,11 @@ class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, UnpaddedQwen3MoeExperts):
+            module.gate_up_proj.data.normal_(mean=0.0, std=std)
+            module.down_proj.data.normal_(mean=0.0, std=std)
+        elif isinstance(module, UnpaddedQwen3MoeTopKRouter):
+            module.weight.data.normal_(mean=0.0, std=std)
 
 
 class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
