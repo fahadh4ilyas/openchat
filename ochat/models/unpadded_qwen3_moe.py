@@ -292,7 +292,7 @@ class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
                 continue
             _, token_idx = torch.where(expert_mask[expert_idx])
             current_state = nz_hidden_states[token_idx]
-            current_hidden_states = self.experts[expert_idx](current_state)
+            current_hidden_states, _ = self.experts[expert_idx](current_state)
             current_hidden_states = current_hidden_states * routing_weights[token_idx, expert_idx, None]
             final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
         return final_hidden_states, routing_weights
