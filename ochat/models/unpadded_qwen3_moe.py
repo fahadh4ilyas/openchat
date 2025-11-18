@@ -248,46 +248,6 @@ class UnpaddedQwen3MoeMLP(nn.Module):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x)), None
 
 
-class UnpaddedQwen3MoeExperts(nn.Module):
-    """Collection of expert weights stored as 3D tensors."""
-
-    def __init__(self, config: Qwen3MoeConfig):
-        super().__init__()
-        self.num_experts = config.num_experts
-        self.hidden_dim = config.hidden_size
-        self.intermediate_dim = config.moe_intermediate_size
-        self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
-        self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim, self.intermediate_dim))
-        self.act_fn = ACT2FN[config.hidden_act]
-
-    def forward(
-        self,
-        hidden_states: torch.Tensor,
-        top_k_index: torch.Tensor,
-        top_k_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        final_hidden_states = torch.zeros_like(hidden_states)
-        num_experts = top_k_weights.shape[1]
-        with torch.no_grad():
-            expert_mask = torch.nn.functional.one_hot(top_k_index, num_classes=num_experts + 1)
-            expert_mask = expert_mask.permute(2, 1, 0)
-            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
-
-        for expert_idx in expert_hit:
-            expert_idx = expert_idx[0]
-            if expert_idx == num_experts:
-                continue
-            _, token_idx = torch.where(expert_mask[expert_idx])
-            current_state = hidden_states[token_idx]
-            gate, up = nn.functional.linear(current_state, self.gate_up_proj[expert_idx]).chunk(2, dim=-1)
-            current_hidden_states = self.act_fn(gate) * up
-            current_hidden_states = nn.functional.linear(current_hidden_states, self.down_proj[expert_idx])
-            current_hidden_states = current_hidden_states * top_k_weights[token_idx, expert_idx, None]
-            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
-
-        return final_hidden_states
-
-
 class UnpaddedQwen3MoeTopKRouter(nn.Module):
     def __init__(self, config: Qwen3MoeConfig):
         super().__init__()
@@ -312,12 +272,29 @@ class UnpaddedQwen3MoeTopKRouter(nn.Module):
 class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
     def __init__(self, config: Qwen3MoeConfig):
         super().__init__()
-        self.experts = UnpaddedQwen3MoeExperts(config)
-        self.router = UnpaddedQwen3MoeTopKRouter(config)
+        self.experts = nn.ModuleList(
+            [UnpaddedQwen3MoeMLP(config, intermediate_size=config.moe_intermediate_size) for _ in range(config.num_experts)]
+        )
+        self.gate = UnpaddedQwen3MoeTopKRouter(config)
 
     def forward(self, nz_hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        routing_weights, selected_experts = self.router(nz_hidden_states)
-        final_hidden_states = self.experts(nz_hidden_states, selected_experts, routing_weights)
+        routing_weights, selected_experts = self.gate(nz_hidden_states)
+        final_hidden_states = torch.zeros_like(nz_hidden_states)
+        num_experts = routing_weights.shape[1]
+        with torch.no_grad():
+            expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=num_experts + 1)
+            expert_mask = expert_mask.permute(2, 1, 0)
+            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+
+        for expert_idx in expert_hit:
+            expert_idx = expert_idx[0]
+            if expert_idx == num_experts:
+                continue
+            _, token_idx = torch.where(expert_mask[expert_idx])
+            current_state = nz_hidden_states[token_idx]
+            current_hidden_states = self.experts[expert_idx](current_state)
+            current_hidden_states = current_hidden_states * routing_weights[token_idx, expert_idx, None]
+            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
         return final_hidden_states, routing_weights
 
 
@@ -488,7 +465,6 @@ class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["UnpaddedQwen3MoeDecoderLayer"]
 
-    @torch.no_grad()
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
@@ -499,11 +475,8 @@ class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, UnpaddedQwen3MoeExperts):
-            nn.init.normal_(module.gate_up_proj, mean=0.0, std=std)
-            nn.init.normal_(module.down_proj, mean=0.0, std=std)
         elif isinstance(module, UnpaddedQwen3MoeTopKRouter):
-            nn.init.normal_(module.weight, mean=0.0, std=std)
+            module.weight.data.normal_(mean=0.0, std=std)
 
 
 class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
