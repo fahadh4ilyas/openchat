@@ -22,6 +22,7 @@
 from typing import Optional, Tuple
 
 import torch
+import torch.utils.checkpoint
 import torch.nn.functional as F
 from torch import nn
 
@@ -30,7 +31,6 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
-from .base_rotary import RotaryEmbeddingBase
 
 try:
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
@@ -201,7 +201,7 @@ class UnpaddedQwen3MoeRMSNorm(nn.Module):
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Qwen3Moe
-class UnpaddedQwen3MoeRotaryEmbedding(RotaryEmbeddingBase):
+class UnpaddedQwen3MoeRotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
