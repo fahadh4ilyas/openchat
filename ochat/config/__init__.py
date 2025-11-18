@@ -926,7 +926,7 @@ MODEL_CONFIG_MAP = {
         # Conversation Template
         conversation_template=partial(
             ChatMLConversationTemplate,
-            model="qwen3_moe",
+            model="qwen3Moe",
             role_prefix=_chatml_role_prefix,
             prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
             inference_condition="GPT4 correct",
@@ -945,7 +945,7 @@ MODEL_CONFIG_MAP = {
         # Conversation Template
         conversation_template=partial(
             ChatMLConversationTemplate,
-            model="qwen3_moe",
+            model="qwen3Moe",
             role_prefix=_chatml_role_prefix,
             prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
             inference_condition="GPT4 correct",
