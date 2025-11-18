@@ -3,7 +3,7 @@ import os
 import json
 from typing import Optional, Union, Literal, List
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator as validator
 
 import torch
 import torch.distributed as dist
@@ -385,9 +385,7 @@ def train(args: TrainingArguments):
             ).loss
 
             if isinstance(loss, tuple):
-                loss, aux_loss = loss
-            else:
-                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+                loss, _ = loss
 
             model_engine.backward(loss)
 

@@ -4,13 +4,14 @@ Generate training data based on conversations
 Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
 """
 
+import gc
 import concurrent.futures
 from typing import List, Optional
 import argparse
 from datetime import datetime
 import random
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator as validator, ValidationInfo
 
 import concurrent
 import orjson
@@ -37,6 +38,14 @@ class DataArguments(BaseModel):
     separate_think: bool = Field(False)
     max_workers: Optional[int] = Field(None)
     max_jobs: int = Field(10)
+    split_files: bool = Field(False)
+    num_splits: int = Field(10)
+
+    @validator("max_jobs")
+    def check_max_jobs(cls, v, info: ValidationInfo):
+        if info.data['max_workers'] is not None and v > info.data['max_workers']:
+            raise ValueError("max_jobs cannot be greater than max_workers")
+        return v
 
 
 PAD_TOKEN_ID = 0
@@ -188,7 +197,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
 
     job_print(job_id, "Chunk finish")
 
-    return outputs, job_id
+    return outputs
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
@@ -209,31 +218,44 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
     with concurrent.futures.ProcessPoolExecutor(
         max_workers=args.max_workers
     ) as executor:
-        batches = list(enumerate(_split(conversations, executor._max_workers)))
-        outputs = [None] * len(batches)
+        batches = list(enumerate(_split(conversations, args.num_splits)))
+        if not args.split_files:
+            outputs = [None] * len(batches)
         for i in range(0, len(batches), args.max_jobs):
             subbatches = batches[i:i+args.max_jobs]
-            handles = [
+            handles = {
                 executor.submit(
                     convert_conversation_batch, job_id=job_id, batch=batch, args=args
-                )
+                ): job_id
                 for job_id, batch in subbatches
-            ]
+            }
 
             # Collecting
             for handle in concurrent.futures.as_completed(handles):
-                output, job_id = handle.result()
-                outputs[job_id] = output
-                job_print(job_id, "Collect result is done")
-        outputs = [d for output in outputs for d in output]
+                job_id = handles.pop(handle)
+                output = handle.result()
+                if args.split_files:
+                    # write immediately
+                    parquet.write_table(
+                        pyarrow.Table.from_pylist(output, schema=schema),
+                        f"{args.out_prefix}.{split_name}.part{job_id:03d}.parquet",
+                    )
+                    job_print(job_id, "Write part file is done")
+                else:
+                    outputs[job_id] = output
+                    job_print(job_id, "Collect result is done")
+                gc.collect()
+        if not args.split_files:
+            outputs = [d for output in outputs for d in output]
 
     # write
-    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
-    parquet.write_table(
-        pyarrow.Table.from_pylist(outputs, schema=schema),
-        f"{args.out_prefix}.{split_name}.parquet",
-    )
-    print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
+    if not args.split_files:
+        print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
+        parquet.write_table(
+            pyarrow.Table.from_pylist(outputs, schema=schema),
+            f"{args.out_prefix}.{split_name}.parquet",
+        )
+        print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write finish')
 
 
 def generate_dataset(args: DataArguments):
@@ -278,6 +300,8 @@ if __name__ == "__main__":
     parser.add_argument("--separate-think", action="store_true", help="If true, if the sequence contains a think token, the sequence will be separated into multiple sequences with thinking only on the end of the sequence. If false, the sequence will be treated as a single sequence.")
     parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--max-jobs", type=int, default=10)
+    parser.add_argument("--num-splits", type=int, default=10, help="Number of split jobs to create.")
+    parser.add_argument("--split-files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))

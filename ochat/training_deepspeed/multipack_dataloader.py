@@ -165,6 +165,9 @@ class MultipackDistributedDataloader:
         )
 
         lengths = self.lengths[indices]
+        masks_overlap = lengths <= self.batch_max_length
+        indices = indices[masks_overlap]
+        lengths = lengths[masks_overlap]
         numseqs = self.numseqs[indices]
         lengths_cumsum = np.cumsum(lengths)
 

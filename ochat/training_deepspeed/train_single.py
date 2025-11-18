@@ -1,12 +1,10 @@
 import argparse
 import os
-import json
 from typing import Optional, Union, Literal, Tuple
 
 from pydantic import BaseModel, Field, field_validator as validator
 
 import torch
-import torch.distributed as dist
 
 import tqdm
 import mlflow
@@ -23,29 +21,16 @@ from ochat.training_deepspeed.utils import (
     clean_checkpoint,
     save_tokenizer,
 )
-from ochat.training_deepspeed.multipack_dataloader import (
-    MultipackDistributedDataloader,
-)
+from ochat.training_deepspeed.multipack_dataloader_single import MultipackDataloader
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
-from ochat.training_deepspeed.train_lora import (
+
+from ochat.training_deepspeed.train_lora_single import (
     TrainingArguments as LoraTrainingArguments,
     train as lora_train,
 )
-from ochat.training_deepspeed.train_ring import (
-    train as train_ring,
-    lora_train as lora_train_ring,
-)
-
-from transformers.integrations import HfDeepSpeedConfig
-
-try:
-    import deepspeed
-except ImportError:
-    raise ImportError("Please install deepspeed to train models.")
 
 
 class TrainingArguments(BaseModel):
-    local_rank: int = Field(...)
     model_path: str = Field(...)
     model_type: Optional[str] = Field(None)
     data_prefix: str = Field(...)
@@ -59,7 +44,6 @@ class TrainingArguments(BaseModel):
     batch_max_len: int = Field(81920)
     epochs: int = Field(5)
     max_steps: int = Field(0)
-    use_zero_one_opt: bool = Field(False)
     base_lr: float = Field(3e-4)
     lr: Optional[float] = Field(None)
     lr_min_ratio: float = Field(0.1)
@@ -76,13 +60,6 @@ class TrainingArguments(BaseModel):
     mlflow_password: Optional[str] = Field(None)
     experiment_name: str = Field(...)
     run_name: str = Field(...)
-    deepscale: bool = Field(False)
-    deepscale_config: Optional[str] = Field(None)
-    deepspeed: bool = Field(True)
-    deepspeed_config: Union[str, dict] = Field(...)
-    deepspeed_mpi: bool = Field(False)
-    ds_offload: bool = Field(False)
-    ds_zero_op: int = Field(0)
     device: Optional[str] = Field(None)
 
     @validator("batch_max_len")
@@ -95,15 +72,12 @@ class TrainingArguments(BaseModel):
 
 def parse_args() -> (
     Tuple[
-        argparse.Namespace, argparse.Namespace, argparse.Namespace, argparse.Namespace
+        argparse.Namespace, argparse.Namespace, argparse.Namespace
     ]
 ):
-    parser_base = argparse.ArgumentParser(add_help=False)
-    parser_ring_confirm = argparse.ArgumentParser(add_help=False)
+    parser_base = argparse.ArgumentParser()
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
-    # Distributed
-    parser_base.add_argument("--local_rank", type=int, required=True)
 
     # Model type and data
     parser_base.add_argument("--model_path", type=str, required=True)
@@ -126,7 +100,6 @@ def parse_args() -> (
     parser_base.add_argument("--max_steps", type=int, default=0)
 
     # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
-    parser_base.add_argument("--use_zero_one_opt", action="store_true")
     parser_base.add_argument("--base_lr", type=float, default=3e-4)
     parser_base.add_argument("--lr", type=float, default=None)
     parser_base.add_argument("--lr_min_ratio", type=float, default=0.1)
@@ -150,9 +123,6 @@ def parse_args() -> (
     parser_base.add_argument("--experiment_name", type=str, required=True)
     parser_base.add_argument("--run_name", type=str, required=True)
 
-    # RING
-    parser_ring_confirm.add_argument("--use_ring", action="store_true")
-
     # LORA
     parser_lora_confirm.add_argument("--use_lora", action="store_true")
     parser_lora.add_argument("--lora_alpha", type=int, default=32)
@@ -173,26 +143,22 @@ def parse_args() -> (
     parser_lora.add_argument("--quant_type_4bit", type=str, default="nf4")
     parser_lora.add_argument("--use_double_quant_4bit", action="store_true")
 
-    # DeepSpeed parameters
-    parser_base = deepspeed.add_config_arguments(parser_base)
-
     # Group parser
     parser_group = argparse.ArgumentParser(
-        parents=[parser_base, parser_ring_confirm, parser_lora_confirm, parser_lora]
+        parents=[parser_base, parser_lora_confirm, parser_lora]
     )
 
     # Parse known args
     parser_group.parse_args()
     args_base, _ = parser_base.parse_known_args()
-    args_ring_confirm, _ = parser_ring_confirm.parse_known_args()
     args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
     args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_ring_confirm, args_lora_confirm, args_lora
+    return args_base, args_lora_confirm, args_lora
 
 
 def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
     # Multipack dataloader
-    return MultipackDistributedDataloader(
+    return MultipackDataloader(
         dataset=data,
         lengths=data["total_length"],
         numseqs=data["num_seqs"],
@@ -210,64 +176,31 @@ def create_model(args: TrainingArguments):
 
     # Create model + optimizer + lr scheduler
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
-        model_path, low_cpu_mem_usage=args.ds_zero_op != 3
+        model_path, low_cpu_mem_usage=True
     )
-    if not args.ds_offload:
-        # Model to assigned cuda device
-        model = model.to(args.local_rank)
+    # Model to assigned cuda device
+    model = model.to("cuda")
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
 
     # Optimizer
-    if args.ds_offload:
-        optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(
-            model.parameters(),
-            lr=args.lr,
-            weight_decay=args.weight_decay,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
-    elif args.use_zero_one_opt:
-        with open(args.deepspeed_config) as f:
-            ds_config: dict = json.load(f)
-        ds_config["optimizer"] = {
-            "type": "ZeroOneAdam",
-            "params": {
-                "lr": args.lr,
-                "weight_decay": args.weight_decay,
-                "betas": [args.beta1, args.beta2],
-                "eps": args.eps,
-            },
-        }
-        ds_config.pop("zero_optimization", None)
-        args.deepspeed_config = ds_config
-        optimizer = None
-    else:
-        optimizer = deepspeed.ops.adam.FusedAdam(
-            model.parameters(),
-            lr=args.lr,
-            weight_decay=args.weight_decay,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
-        )
-
-    # DeepSpeed model
-    model_engine, optimizer, _, _ = deepspeed.initialize(
-        args=args, model=model, model_parameters=model.parameters(), optimizer=optimizer
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad],
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        betas=(args.beta1, args.beta2),
+        eps=args.eps,
+        fused=True,
     )
 
-    # Put deepspeed arguments
-    args.device = model_engine.device
+    # Save device location
+    args.device = model.device
 
-    return model_engine, optimizer
+    return model, optimizer
 
 
 @mlflow_stopper_wrapper
 def train(args: TrainingArguments):
-    deepspeed.init_distributed(dist_backend="nccl")
-    dsconfig = HfDeepSpeedConfig(args.deepspeed_config)
-    RANK = dist.get_rank()
-
     # Dataset
     train_dataset = create_dataset(args, "train")
     eval_dataset = create_dataset(args, "eval")
@@ -296,50 +229,48 @@ def train(args: TrainingArguments):
     )
 
     # Logger
-    if RANK == 0:
-        if args.tracking_uri:
-            mlflow.set_tracking_uri(args.tracking_uri)
-        if args.mlflow_username:
-            os.environ["MLFLOW_TRACKING_USERNAME"] = args.mlflow_username
-        if args.mlflow_password:
-            os.environ["MLFLOW_TRACKING_PASSWORD"] = args.mlflow_password
-        mlflow.set_experiment(args.experiment_name)
-        mlflow.start_run(run_name=args.run_name)
-        metadata = vars(args).copy()
-        metadata.pop("local_rank", None)
-        metadata.pop("device", None)
-        metadata["steps"] = train_total_steps
-        mlflow.log_params(metadata)
+    if args.tracking_uri:
+        mlflow.set_tracking_uri(args.tracking_uri)
+    if args.mlflow_username:
+        os.environ["MLFLOW_TRACKING_USERNAME"] = args.mlflow_username
+    if args.mlflow_password:
+        os.environ["MLFLOW_TRACKING_PASSWORD"] = args.mlflow_password
+    mlflow.set_experiment(args.experiment_name)
+    mlflow.start_run(run_name=args.run_name)
+    metadata = vars(args).copy()
+    metadata.pop("local_rank", None)
+    metadata.pop("device", None)
+    metadata["steps"] = train_total_steps
+    mlflow.log_params(metadata)
 
     # Model
-    model_engine, optimizer = create_model(args)
+    model, optimizer = create_model(args)
 
     # LR Scheduler
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 
     # Progress bar
-    progress_bar = None
-    if RANK == 0:
-        progress_bar = tqdm.tqdm(total=train_total_steps)
+    progress_bar = tqdm.tqdm(total=train_total_steps)
 
     # Training Loop
     step = 0
     latest_checkpoint = int((get_latest_checkpoint(args) or "_0").split("_")[-1])
     lr_this_step = None
-    model_engine.train()
+    model.train()
     eval_epoch = 0
     for epoch in range(args.epochs):
-        print(f"[rank {RANK}]: Epoch {epoch}")
+        print(f"Epoch {epoch}")
 
         train_loader.set_epoch(epoch)
-        for (batch_tensor, batch_info), all_numseq, cur_numseq in train_loader:
+        for (batch_tensor, batch_info), num_seq in train_loader:
             step += 1
             if step > train_total_steps:  # At most train_total_steps
                 break
             elif step <= latest_checkpoint:
-                if RANK == 0:
-                    progress_bar.update()
+                progress_bar.update()
                 continue
+
+            optimizer.zero_grad()
 
             # To device
             batch_tensor = {
@@ -348,74 +279,54 @@ def train(args: TrainingArguments):
             }
 
             # Update
-            loss, acc = model_engine(
+            loss, acc = model(
                 **batch_tensor,
                 **batch_info,
-                num_seq=all_numseq,
+                num_seq=num_seq,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
 
             if isinstance(loss, tuple):
-                loss, aux_loss = loss
-            else:
-                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+                loss, _ = loss
 
-            model_engine.backward(loss)
+            loss.backward()
 
-            if model_engine.is_gradient_accumulation_boundary():
-                # Set LR
-                lr_this_step = args.lr * lr_scheduler(step)
-                for param_group in optimizer.param_groups:
-                    param_group["lr"] = lr_this_step
+            # Set LR
+            lr_this_step = args.lr * lr_scheduler(step)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr_this_step
 
-            model_engine.step()
+            optimizer.step()
 
             # Logging
-            if RANK == 0:
-                mlflow.log_metrics(
-                    metrics={
-                        "train/loss": (loss.item() - aux_loss.item())
-                        * (all_numseq / cur_numseq)
-                        + aux_loss.item(),
-                        "train/acc": acc.item() * (all_numseq / cur_numseq),
-                        "train/lr": lr_this_step,
-                        "train/epoch": args.epochs * step / train_total_steps,
-                    },
-                    step=step,
-                )
-                progress_bar.update()  # type: ignore
+            mlflow.log_metrics(
+                metrics={
+                    "train/loss": loss.item(),
+                    "train/acc": acc.item(),
+                    "train/lr": lr_this_step,
+                    "train/epoch": args.epochs * step / train_total_steps,
+                },
+                step=step,
+            )
+            progress_bar.update()  # type: ignore
 
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
-                dist.barrier()
+                save_path = os.path.join(args.save_path, f"checkpoint_{step}")
 
-                if model_engine.zero_optimization_stage() == 3:
-                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
-                elif RANK == 0:
-                    state_dict = (
-                        deepspeed.checkpoint.utils.clone_tensors_for_torch_save(
-                            model_engine.module.state_dict()
-                        )
-                    )
+                model.save_pretrained(save_path)  # type: ignore
 
-                if RANK == 0:
-                    save_path = os.path.join(args.save_path, f"checkpoint_{step}")
+                # Write metadata
+                save_openchat_metadata(args, epoch + 1, step, save_path)
 
-                    model_engine.module.save_pretrained(
-                        save_path, state_dict=state_dict
-                    )  # type: ignore
-
-                    # Write metadata
-                    save_openchat_metadata(args, epoch + 1, step, save_path)
-
-                    clean_checkpoint(args)
+                clean_checkpoint(args)
 
             if eval_loader is not None and (
                 args.eval_strategy == "step"
                 and args.eval_every
                 and (step % args.eval_every == 0)
             ):
-                model_engine.eval()
+                model.eval()
 
                 eval_total_metric = torch.zeros(
                     (2,), dtype=torch.float32, device=args.device
@@ -427,7 +338,7 @@ def train(args: TrainingArguments):
                     for (
                         batch_tensor,
                         batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    ), num_seq in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -435,10 +346,10 @@ def train(args: TrainingArguments):
                         }
 
                         # Eval
-                        eval_loss, eval_acc = model_engine(
+                        eval_loss, eval_acc = model(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            num_seq=num_seq,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -452,56 +363,38 @@ def train(args: TrainingArguments):
 
                 # Gather eval loss (reduce sum)
                 eval_total_metric.div_(eval_total_steps)
-                dist.reduce(eval_total_metric, 0)
 
                 eval_epoch += 1
 
-                if RANK == 0:
-                    eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                    mlflow.log_metrics(
-                        metrics={"eval/loss": eval_loss, "eval/acc": eval_acc},
-                        step=step,
-                    )
+                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                mlflow.log_metrics(
+                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
+                )
 
-                model_engine.train()
+                model.train()
 
             if (
                 args.save_strategy == "step"
                 and args.save_every
                 and (step % args.save_every == 0)
             ):
-                dist.barrier()
+                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
-                if model_engine.zero_optimization_stage() == 3:
-                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
-                elif RANK == 0:
-                    state_dict = (
-                        deepspeed.checkpoint.utils.clone_tensors_for_torch_save(
-                            model_engine.module.state_dict()
-                        )
-                    )
+                model.save_pretrained(save_path)  # type: ignore
 
-                if RANK == 0:
-                    save_path = os.path.join(args.save_path, f"st_{step}")
+                # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
 
-                    model_engine.module.save_pretrained(
-                        save_path, state_dict=state_dict
-                    )  # type: ignore
-
-                    # Also save tokenizer from base model
-                    save_tokenizer(args, save_path)
-
-                    # Write metadata
-                    save_openchat_metadata(
-                        args, args.epochs * step / train_total_steps, step, save_path
-                    )
+                # Write metadata
+                save_openchat_metadata(
+                    args, args.epochs * step / train_total_steps, step, save_path
+                )
 
         if step > latest_checkpoint:
             # Log batch efficiency
-            if RANK == 0:
-                mlflow.log_metrics(
-                    metrics={"batch_efficiency": train_loader.efficiency()}, step=step
-                )
+            mlflow.log_metrics(
+                metrics={"batch_efficiency": train_loader.efficiency()}, step=step
+            )
 
             if eval_loader is not None and (
                 (step == train_total_steps)
@@ -512,7 +405,7 @@ def train(args: TrainingArguments):
                     and ((epoch + 1) % args.eval_every == 0)
                 )
             ):
-                model_engine.eval()
+                model.eval()
 
                 eval_total_metric = torch.zeros(
                     (2,), dtype=torch.float32, device=args.device
@@ -524,7 +417,7 @@ def train(args: TrainingArguments):
                     for (
                         batch_tensor,
                         batch_info,
-                    ), all_numseq, cur_numseq in eval_loader:
+                    ), num_seq in eval_loader:
                         # To device
                         batch_tensor = {
                             k: (v.to(args.device) if v is not None else None)
@@ -532,10 +425,10 @@ def train(args: TrainingArguments):
                         }
 
                         # Eval
-                        eval_loss, eval_acc = model_engine(
+                        eval_loss, eval_acc = model(
                             **batch_tensor,
                             **batch_info,
-                            num_seq=all_numseq,
+                            num_seq=num_seq,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -549,18 +442,15 @@ def train(args: TrainingArguments):
 
                 # Gather eval loss (reduce sum)
                 eval_total_metric.div_(eval_total_steps)
-                dist.reduce(eval_total_metric, 0)
 
                 eval_epoch += 1
 
-                if RANK == 0:
-                    eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                    mlflow.log_metrics(
-                        metrics={"eval/loss": eval_loss, "eval/acc": eval_acc},
-                        step=step,
-                    )
+                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+                mlflow.log_metrics(
+                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
+                )
 
-                model_engine.train()
+                model.train()
 
             ############ Save Checkpoint
             # Save model with lean state dict
@@ -574,55 +464,25 @@ def train(args: TrainingArguments):
                     and ((epoch + 1) % args.save_every == 0)
                 )
             ):
-                dist.barrier()
+                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
-                if model_engine.zero_optimization_stage() == 3:
-                    state_dict = model_engine._zero3_consolidated_16bit_state_dict()
-                elif RANK == 0:
-                    state_dict = (
-                        deepspeed.checkpoint.utils.clone_tensors_for_torch_save(
-                            model_engine.module.state_dict()
-                        )
-                    )
+                model.save_pretrained(save_path)  # type: ignore
 
-                if RANK == 0:
-                    save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
+                # Also save tokenizer from base model
+                save_tokenizer(args, save_path)
 
-                    model_engine.module.save_pretrained(
-                        save_path, state_dict=state_dict
-                    )  # type: ignore
+                # Write metadata
+                save_openchat_metadata(args, epoch + 1, step, save_path)
 
-                    # Also save tokenizer from base model
-                    save_tokenizer(args, save_path)
-
-                    # Write metadata
-                    save_openchat_metadata(args, epoch + 1, step, save_path)
-
-    if RANK == 0:
-        mlflow.end_run()
+    mlflow.end_run()
 
 
 if __name__ == "__main__":
-    args, args_ring_confirm, args_lora_confirm, args_lora = parse_args()
+    args, args_lora_confirm, args_lora = parse_args()
     args = TrainingArguments(**vars(args))
-    with open(args.deepspeed_config) as f:
-        deepspeed_config: dict = json.load(f)
-    args.ds_zero_op = deepspeed_config.get("zero_optimization", {}).get("stage", 2)
-    if deepspeed_config.get("zero_optimization", {}).get(
-        "offload_optimizer", False
-    ) or deepspeed_config.get("zero_optimization", {}).get("offload_param", False):
-        args.ds_offload = True
-        args.use_zero_one_opt = False
     if args_lora_confirm.use_lora or args_lora.use_qlora:
         args = {**args.model_dump(), **vars(args_lora)}
         args = LoraTrainingArguments(**args)
-        if args.ds_offload:
-            args.use_qlora = False
-        if args_ring_confirm.use_ring:
-            lora_train_ring(args)
-        else:
-            lora_train(args)
-    elif args_ring_confirm.use_ring:
-        train_ring(args)
+        lora_train(args)
     else:
         train(args)

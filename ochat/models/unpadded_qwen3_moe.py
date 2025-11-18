@@ -17,18 +17,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Unpadded & Fused Mistral model. Compatible with HF. """
+""" PyTorch Unpadded & Fused Qwen3 Moe model. Compatible with HF. """
 
 from typing import Optional, Tuple
 
-import torch, math
+import torch
+import torch.nn.functional as F
 from torch import nn
 
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from .configuration_mistral_long import MistralConfig
+from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
@@ -41,6 +42,86 @@ from ochat.kernel.rope import fast_rope_embedding
 
 
 logger = logging.get_logger(__name__)
+
+
+def load_balancing_loss_func(
+    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2, attn_length: int = None, max_length: int = None
+) -> float:
+    r"""
+    Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
+
+    See Switch Transformer (https://arxiv.org/abs/2101.03961) for more details. This function implements the loss
+    function presented in equations (4) - (6) of the paper. It aims at penalizing cases where the routing between
+    experts is too unbalanced.
+
+    Args:
+        gate_logits (Union[`torch.Tensor`, Tuple[torch.Tensor]):
+            Logits from the `gate`, should be a tuple of model.config.num_hidden_layers tensors of
+            shape [batch_size X sequence_length, num_experts].
+        num_experts (`int`, *optional*):
+            Number of experts
+
+    Returns:
+        The auxiliary loss.
+    """
+    if gate_logits is None or not isinstance(gate_logits, tuple):
+        return 0
+
+    if isinstance(gate_logits, tuple):
+        compute_device = gate_logits[0].device
+        concatenated_gate_logits = torch.cat(
+            [layer_gate.to(compute_device) for layer_gate in gate_logits], dim=0
+        )
+
+    routing_weights = torch.nn.functional.softmax(concatenated_gate_logits, dim=-1)
+
+    _, selected_experts = torch.topk(routing_weights, top_k, dim=-1)
+
+    expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
+
+    if attn_length is None:
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.mean(routing_weights, dim=0)
+    else:
+        attention_mask = torch.cat([
+            torch.ones(attn_length, dtype=torch.long),
+            torch.zeros(max_length - attn_length, dtype=torch.long) if max_length is not None else torch.tensor([], dtype=torch.long)
+        ], dim=0)
+
+        sequence_length = attention_mask.shape[0]
+        num_hidden_layers = concatenated_gate_logits.shape[0] // sequence_length
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
+        expert_attention_mask = (
+            attention_mask[None, :, None, None]
+            .expand((num_hidden_layers, sequence_length, top_k, num_experts))
+            .reshape(-1, top_k, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
+            expert_attention_mask, dim=0
+        )
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of tokens_per_expert
+        router_per_expert_attention_mask = (
+            attention_mask[None, :, None]
+            .expand((num_hidden_layers, sequence_length, num_experts))
+            .reshape(-1, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
+            router_per_expert_attention_mask, dim=0
+        )
+
+    overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
+    return overall_loss * num_experts
 
 
 @torch.jit.script  # type: ignore
@@ -71,45 +152,6 @@ def rms_norm(
     return weight * hidden_states.to(input_dtype)
 
 
-# Inverse dim formula to find dim based on number of rotations
-def _yarn_find_correction_dim(
-    num_rotations, dim, base=10000, max_position_embeddings=2048
-):
-    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
-        2 * math.log(base)
-    )
-
-
-# Find dim range bounds based on rotations
-def _yarn_find_correction_range(
-    low_rot, high_rot, dim, base=10000, max_position_embeddings=2048
-):
-    low = math.floor(
-        _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
-    )
-    high = math.ceil(
-        _yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
-    return max(low, 0), min(high, dim - 1)  # Clamp values just in case
-
-
-def _yarn_linear_ramp_mask(min, max, dim, inv_freq):
-    if min == max:
-        max += 0.001  # Prevent singularity
-
-    linear_func = (torch.arange(dim, dtype=torch.int64).type_as(inv_freq) - min) / (
-        max - min
-    )
-    ramp_func = torch.clamp(linear_func, 0, 1)
-    return ramp_func
-
-
-def _yarn_get_mscale(scale=1):
-    if scale <= 1:
-        return 1.0
-    return 0.1 * math.log(scale) + 1.0
-
-
 def rotate_half(x: torch.Tensor):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -137,11 +179,11 @@ def apply_rotary_pos_emb(
     return q_embed, k_embed
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Mistral
-class UnpaddedMistralRMSNorm(nn.Module):
+# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen3Moe
+class UnpaddedQwen3MoeRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps):
         """
-        UnpaddedMistralRMSNorm is equivalent to T5LayerNorm
+        UnpaddedQwen3MoeRMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
 
@@ -154,20 +196,9 @@ class UnpaddedMistralRMSNorm(nn.Module):
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Mistral
-
-
-class UnpaddedMistralLinearScalingRotaryEmbedding(torch.nn.Module):
-    """MistralRotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
-
-    def __init__(
-        self,
-        dim,
-        max_position_embeddings=2048,
-        base=10000,
-        device=None,
-        scaling_factor=1.0,
-    ):
+# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Qwen3Moe
+class UnpaddedQwen3MoeRotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
         # RoPE
@@ -177,7 +208,6 @@ class UnpaddedMistralLinearScalingRotaryEmbedding(torch.nn.Module):
         )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
-        self.scaling_factor = scaling_factor
         self.calculate_cos_sin(max_position_embeddings)
 
     def calculate_cos_sin(self, max_position_embeddings):
@@ -186,7 +216,7 @@ class UnpaddedMistralLinearScalingRotaryEmbedding(torch.nn.Module):
         t = torch.arange(
             max_position_embeddings, dtype=torch.int64, device=self.device
         ).type_as(self.inv_freq)
-        t = t / self.scaling_factor
+
         freqs = torch.outer(t, self.inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
@@ -202,100 +232,12 @@ class UnpaddedMistralLinearScalingRotaryEmbedding(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-class UnpaddedMistralYarnRotaryEmbedding(torch.nn.Module):
-    def __init__(
-        self,
-        dim,
-        max_position_embeddings=2048,
-        base=10000,
-        scale=1,
-        original_max_position_embeddings=2048,
-        extrapolation_factor=1,
-        attn_factor=1,
-        beta_fast=32,
-        beta_slow=1,
-        finetuned=False,
-        device=None,
-    ):
-        super().__init__()
-
-        self.dim = dim
-        self.max_position_embeddings = max_position_embeddings
-        self.base = base
-        self.scale = scale
-        self.original_max_position_embeddings = original_max_position_embeddings
-        self.extrapolation_factor = extrapolation_factor
-        self.attn_factor = attn_factor
-        self.beta_fast = beta_fast
-        self.beta_slow = beta_slow
-
-        self.yarn(device)
-
-    def calculate_cos_sin(self, max_position_embeddings):
-        # Build here to make `torch.jit.trace` work.
-        self.max_seq_len_cached = max_position_embeddings
-        t = torch.arange(
-            self.max_seq_len_cached, dtype=torch.int64, device=self.inv_freq.device
-        ).type_as(self.inv_freq)
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        # Different from paper, but it uses a different permutation in order to obtain the same calculation
-        emb = torch.cat((freqs, freqs), dim=-1)
-        dtype = torch.get_default_dtype()
-
-        self.register_buffer(
-            "cos_cached", (emb.cos() * self.mscale).to(dtype), persistent=False
-        )
-        self.register_buffer(
-            "sin_cached", (emb.sin() * self.mscale).to(dtype), persistent=False
-        )
-
-    def yarn(self, device):
-        pos_freqs = self.base ** (
-            torch.arange(0, self.dim, 2, dtype=torch.int64, device=device).float()
-            / self.dim
-        )
-        inv_freq_extrapolation = 1.0 / pos_freqs
-        inv_freq_interpolation = 1.0 / (self.scale * pos_freqs)
-
-        low, high = _yarn_find_correction_range(
-            self.beta_fast,
-            self.beta_slow,
-            self.dim,
-            self.base,
-            self.original_max_position_embeddings,
-        )
-        inv_freq_mask = (
-            (
-                1
-                - _yarn_linear_ramp_mask(
-                    low, high, self.dim // 2, inv_freq_interpolation
-                ).to(device)
-            )
-            * self.extrapolation_factor
-        )  # Get n-d rotational scaling corrected for extrapolation
-        inv_freq = (
-            inv_freq_interpolation * (1 - inv_freq_mask)
-            + inv_freq_extrapolation * inv_freq_mask
-        )
-
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.mscale = float(
-            _yarn_get_mscale(self.scale) * self.attn_factor
-        )  # Get n-d magnitude scaling corrected for interpolation
-
-    def forward(self, max_position_embeddings):
-        if max_position_embeddings > self.max_seq_len_cached:
-            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
-            self.calculate_cos_sin(max_position_embeddings)
-        return self.cos_cached, self.sin_cached
-
-
-class UnpaddedMistralMLP(nn.Module):
-    def __init__(self, config: MistralConfig):
+class UnpaddedQwen3MoeMLP(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig, intermediate_size=None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
+        self.intermediate_size = intermediate_size if intermediate_size is not None else config.intermediate_size
 
         self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
         self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
@@ -303,40 +245,112 @@ class UnpaddedMistralMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x)), None
 
 
-class UnpaddedMistralAttention(nn.Module):
+class UnpaddedQwen3MoeExperts(nn.Module):
+    """Collection of expert weights stored as 3D tensors."""
+
+    def __init__(self, config: Qwen3MoeConfig):
+        super().__init__()
+        self.num_experts = config.num_experts
+        self.hidden_dim = config.hidden_size
+        self.intermediate_dim = config.moe_intermediate_size
+        self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
+        self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim, self.intermediate_dim))
+        self.act_fn = ACT2FN[config.hidden_act]
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        top_k_index: torch.Tensor,
+        top_k_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        final_hidden_states = torch.zeros_like(hidden_states)
+        num_experts = top_k_weights.shape[1]
+        with torch.no_grad():
+            expert_mask = torch.nn.functional.one_hot(top_k_index, num_classes=num_experts + 1)
+            expert_mask = expert_mask.permute(2, 1, 0)
+            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+
+        for expert_idx in expert_hit:
+            expert_idx = expert_idx[0]
+            if expert_idx == num_experts:
+                continue
+            _, token_idx = torch.where(expert_mask[expert_idx])
+            current_state = hidden_states[token_idx]
+            gate, up = nn.functional.linear(current_state, self.gate_up_proj[expert_idx]).chunk(2, dim=-1)
+            current_hidden_states = self.act_fn(gate) * up
+            current_hidden_states = nn.functional.linear(current_hidden_states, self.down_proj[expert_idx])
+            current_hidden_states = current_hidden_states * top_k_weights[token_idx, expert_idx, None]
+            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
+
+        return final_hidden_states
+
+
+class UnpaddedQwen3MoeTopKRouter(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig):
+        super().__init__()
+        self.top_k = config.num_experts_per_tok
+        self.num_experts = config.num_experts
+        self.norm_topk_prob = config.norm_topk_prob
+        self.hidden_dim = config.hidden_size
+        self.weight = nn.Parameter(torch.zeros(self.num_experts, self.hidden_dim))
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        if self.norm_topk_prob:
+            router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
+        router_top_value = router_top_value.to(router_logits.dtype)
+        router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        return router_scores, router_indices
+
+
+class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig):
+        super().__init__()
+        self.experts = UnpaddedQwen3MoeExperts(config)
+        self.router = UnpaddedQwen3MoeTopKRouter(config)
+
+    def forward(self, nz_hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        routing_weights, selected_experts = self.router(nz_hidden_states)
+        final_hidden_states = self.experts(nz_hidden_states, selected_experts, routing_weights)
+        return final_hidden_states, routing_weights
+
+
+class UnpaddedQwen3MoeAttention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: MistralConfig):
+    def __init__(self, config: Qwen3MoeConfig, layer_idx: Optional[int] = None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
+        self.layer_idx = layer_idx
+        self.max_window_layers = config.max_window_layers
+        self.num_attention_heads = config.num_attention_heads
+        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.scaling = self.head_dim**-0.5
         self.sliding_window = config.sliding_window
         self.attention_dropout = config.attention_dropout
-
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+        self.use_sliding_window = config.use_sliding_window
 
         self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
+            self.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
         )
         self.k_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
         self.v_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
         )
         self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=False
+            config.num_attention_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
         )
+        self.q_norm = UnpaddedQwen3MoeRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = UnpaddedQwen3MoeRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
 
     def forward(
         self,
@@ -347,19 +361,23 @@ class UnpaddedMistralAttention(nn.Module):
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
         use_fast_rope: bool = False,
+        use_fast_norm: bool = False,
     ) -> torch.Tensor:
         # nz_hidden_states: [nnz, num_heads, head_dim]
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(
-            -1, self.num_heads, self.head_dim
-        )
-        key_states = self.k_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
-        )
+        input_shape = nz_hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_norm(self.q_proj(nz_hidden_states).view(
+            *hidden_shape
+        ), use_fast_norm)
+        key_states = self.k_norm(self.k_proj(nz_hidden_states).view(
+            *hidden_shape
+        ), use_fast_norm)
         value_states = self.v_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
+            *hidden_shape
         )
 
         # RoPE
@@ -368,16 +386,21 @@ class UnpaddedMistralAttention(nn.Module):
             query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
         )
 
+        use_sliding_window = (
+            self.use_sliding_window and self.layer_idx < self.max_window_layers
+        )
+
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
-                if self.sliding_window is not None
+                if use_sliding_window
                 else (-1, -1),
             )
         else:
@@ -389,29 +412,35 @@ class UnpaddedMistralAttention(nn.Module):
                 cu_seqlens_k=cu_seqlens,
                 max_seqlen_q=max_seqlen,
                 max_seqlen_k=max_seqlen,
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
                 window_size=(self.sliding_window, self.sliding_window)
-                if self.sliding_window is not None
+                if use_sliding_window
                 else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]
-        attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
+        attn_output = attn_output.view(-1, self.num_attention_heads * self.head_dim)  # type: ignore
         return self.o_proj(attn_output)
 
 
-class UnpaddedMistralDecoderLayer(nn.Module):
-    def __init__(self, config: MistralConfig):
+class UnpaddedQwen3MoeDecoderLayer(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig, layer_idx: Optional[int] = None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.self_attn = UnpaddedMistralAttention(config=config)
-        self.mlp = UnpaddedMistralMLP(config=config)
-        self.input_layernorm = UnpaddedMistralRMSNorm(
+        self.self_attn = UnpaddedQwen3MoeAttention(config=config, layer_idx=layer_idx)
+        if (layer_idx not in config.mlp_only_layers) and (
+            config.num_experts > 0 and (layer_idx + 1) % config.decoder_sparse_step == 0
+        ):
+            self.mlp = UnpaddedQwen3MoeSparseMoeBlock(config)
+        else:
+            self.mlp = UnpaddedQwen3MoeMLP(config, intermediate_size=config.intermediate_size)
+        self.input_layernorm = UnpaddedQwen3MoeRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.post_attention_layernorm = UnpaddedMistralRMSNorm(
+        self.post_attention_layernorm = UnpaddedQwen3MoeRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
@@ -437,6 +466,7 @@ class UnpaddedMistralDecoderLayer(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
             use_fast_rope=use_fast_rope,
+            use_fast_norm=use_fast_norm,
         )
         nz_hidden_states = residual + nz_hidden_states
 
@@ -446,17 +476,17 @@ class UnpaddedMistralDecoderLayer(nn.Module):
         nz_hidden_states = self.post_attention_layernorm(
             nz_hidden_states, use_fast_norm
         )
-        nz_hidden_states = self.mlp(nz_hidden_states)
+        nz_hidden_states, router_logits = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
-        return nz_hidden_states
+        return nz_hidden_states, router_logits
 
 
-class UnpaddedMistralPreTrainedModel(PreTrainedModel):
-    config_class = MistralConfig
+class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
+    config_class = Qwen3MoeConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["UnpaddedMistralDecoderLayer"]
+    _no_split_modules = ["UnpaddedQwen3MoeDecoderLayer"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -470,15 +500,15 @@ class UnpaddedMistralPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
+class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedMistralDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedQwen3MoeDecoderLayer`]
 
     Args:
-        config: MistralConfig
+        config: Qwen3MoeConfig
     """
 
-    def __init__(self, config: MistralConfig):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -486,31 +516,19 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        if config.rope_scaling["type"] == "linear":
-            self.rotary_emb = UnpaddedMistralLinearScalingRotaryEmbedding(
-                config.hidden_size // config.num_attention_heads,
-                max_position_embeddings=2048,
-                base=config.rope_theta,
-                scaling_factor=config.rope_scaling["factor"],
-            )
-        elif config.rope_scaling["type"] == "yarn":
-            self.rotary_emb = UnpaddedMistralYarnRotaryEmbedding(
-                config.hidden_size // config.num_attention_heads,
-                max_position_embeddings=2048,
-                scale=config.rope_scaling["factor"],
-                original_max_position_embeddings=config.rope_scaling[
-                    "original_max_position_embeddings"
-                ],
-                base=config.rope_theta,
-            )
+        self.rotary_emb = UnpaddedQwen3MoeRotaryEmbedding(
+            getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
+            max_position_embeddings=config.max_position_embeddings,
+            base=config.rope_theta,
+        )
 
         self.layers = nn.ModuleList(
             [
-                UnpaddedMistralDecoderLayer(config)
-                for _ in range(config.num_hidden_layers)
+                UnpaddedQwen3MoeDecoderLayer(config, layer_idx)
+                for layer_idx in range(config.num_hidden_layers)
             ]
         )
-        self.norm = UnpaddedMistralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = UnpaddedQwen3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -535,10 +553,12 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         nz_hidden_states = self.embed_tokens(nz_input_ids)
         cos_sin = self.rotary_emb(max_seqlen)
 
+        all_router_logits = ()
+
         # decoder layers
         for decoder_layer in self.layers:
             if self.gradient_checkpointing and self.training:
-                nz_hidden_states = self._gradient_checkpointing_func(
+                nz_hidden_states, router_logits = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     cos_sin,
                     nz_hidden_states,
@@ -549,7 +569,7 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                     use_fast_rope,
                 )
             else:
-                nz_hidden_states = decoder_layer(
+                nz_hidden_states, router_logits = decoder_layer(
                     cos_sin=cos_sin,
                     nz_hidden_states=nz_hidden_states,
                     nz_position_ids=nz_position_ids,
@@ -558,18 +578,23 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                     use_fast_norm=use_fast_norm,
                     use_fast_rope=use_fast_rope,
                 )
+            if router_logits is not None:
+                all_router_logits += (router_logits,)
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
 
-        return nz_hidden_states
+        return nz_hidden_states, all_router_logits
 
 
-class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
-    def __init__(self, config):
+class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
-        self.model = UnpaddedMistralModel(config)
+        self.model = UnpaddedQwen3MoeModel(config)
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.router_aux_loss_coef = config.router_aux_loss_coef
+        self.num_experts = config.num_experts
+        self.num_experts_per_tok = config.num_experts_per_tok
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -607,7 +632,7 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
-        hidden_states = self.model(
+        hidden_states, router_logits = self.model(
             nz_input_ids=nz_input_ids,
             nz_position_ids=nz_position_ids,
             cu_seqlens=cu_seqlens,
@@ -620,6 +645,16 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
         loss = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
+            max_length = nz_input_ids.shape[0]
+            latest_seq = nz_input_ids[cu_seqlens[-2]:cu_seqlens[-1]]
+            if (latest_seq == 0).all():
+                attn_length = cu_seqlens[-2]
+            else:
+                attn_length = cu_seqlens[-1]
+
+            aux_loss = load_balancing_loss_func(
+                router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
+            )
 
             if num_seq > 0:
                 acc = (
@@ -629,10 +664,14 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
                     / num_seq
                 )
                 loss = (
-                    weighted_cross_entropy(
-                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
-                    )
-                    / num_seq,
+                    (
+                        weighted_cross_entropy(
+                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                        )
+                        / num_seq
+                        + self.router_aux_loss_coef * aux_loss,
+                        self.router_aux_loss_coef * aux_loss,
+                    ),
                     acc,
                 )
             else:
@@ -640,8 +679,12 @@ class MistralForCausalLM(UnpaddedMistralPreTrainedModel):
                     logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
                 )
                 loss = (
-                    weighted_cross_entropy(
-                        logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                    (
+                        weighted_cross_entropy(
+                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
+                        )
+                        + self.router_aux_loss_coef * aux_loss,
+                        self.router_aux_loss_coef * aux_loss,
                     ),
                     acc,
                 )

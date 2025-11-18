@@ -3,7 +3,7 @@ import os
 import json
 from typing import Optional, Union, Literal, Tuple
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator as validator
 
 import torch
 import torch.distributed as dist
@@ -343,9 +343,7 @@ def train(args: TrainingArguments):
             ).loss
 
             if isinstance(loss, tuple):
-                loss, aux_loss = loss
-            else:
-                aux_loss = torch.tensor([0], dtype=loss.dtype, device=loss.device)
+                loss, _ = loss
 
             model_engine.backward(loss)
 
@@ -595,7 +593,7 @@ if __name__ == "__main__":
         args.ds_offload = True
         args.use_zero_one_opt = False
     if args_lora_confirm.use_lora or args_lora.use_qlora:
-        args = {**args.dict(), **vars(args_lora)}
+        args = {**args.model_dump(), **vars(args_lora)}
         args = LoraTrainingArguments(**args)
         if args.ds_offload:
             args.use_qlora = False

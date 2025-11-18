@@ -22,7 +22,6 @@
 from typing import Optional, Tuple
 
 import torch
-import torch.utils.checkpoint
 import torch.nn.functional as F
 from torch import nn
 
@@ -49,7 +48,7 @@ logger = logging.get_logger(__name__)
 
 
 def load_balancing_loss_func(
-    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2
+    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2, attn_length: int = None, max_length: int = None
 ) -> float:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
@@ -83,11 +82,46 @@ def load_balancing_loss_func(
 
     expert_mask = torch.nn.functional.one_hot(selected_experts, num_experts)
 
-    # Compute the percentage of tokens routed to each experts
-    tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
+    if attn_length is None:
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.mean(expert_mask.float(), dim=0)
 
-    # Compute the average probability of routing to these experts
-    router_prob_per_expert = torch.mean(routing_weights, dim=0)
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.mean(routing_weights, dim=0)
+    else:
+        attention_mask = torch.cat([
+            torch.ones(attn_length, dtype=torch.long),
+            torch.zeros(max_length - attn_length, dtype=torch.long) if max_length is not None else torch.tensor([], dtype=torch.long)
+        ], dim=0)
+
+        sequence_length = attention_mask.shape[0]
+        num_hidden_layers = concatenated_gate_logits.shape[0] // sequence_length
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of expert_mask
+        expert_attention_mask = (
+            attention_mask[None, :, None, None]
+            .expand((num_hidden_layers, sequence_length, top_k, num_experts))
+            .reshape(-1, top_k, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the percentage of tokens routed to each experts
+        tokens_per_expert = torch.sum(expert_mask.float() * expert_attention_mask, dim=0) / torch.sum(
+            expert_attention_mask, dim=0
+        )
+
+        # Compute the mask that masks all padding tokens as 0 with the same shape of tokens_per_expert
+        router_per_expert_attention_mask = (
+            attention_mask[None, :, None]
+            .expand((num_hidden_layers, sequence_length, num_experts))
+            .reshape(-1, num_experts)
+            .to(compute_device)
+        )
+
+        # Compute the average probability of routing to these experts
+        router_prob_per_expert = torch.sum(routing_weights * router_per_expert_attention_mask, dim=0) / torch.sum(
+            router_per_expert_attention_mask, dim=0
+        )
 
     overall_loss = torch.sum(tokens_per_expert * router_prob_per_expert.unsqueeze(0))
     return overall_loss * num_experts
@@ -288,109 +322,81 @@ class UnpaddedMixtralAttention(nn.Module):
         return self.o_proj(attn_output)
 
 
-class UnpaddedMixtralBLockSparseTop2MLP(nn.Module):
+class UnpaddedMixtralExperts(nn.Module):
+    """Collection of expert weights stored as 3D tensors."""
+
     def __init__(self, config: MixtralConfig):
         super().__init__()
-        self.ffn_dim = config.intermediate_size
+        self.num_experts = config.num_local_experts
         self.hidden_dim = config.hidden_size
-
-        self.w1 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)
-        self.w2 = nn.Linear(self.ffn_dim, self.hidden_dim, bias=False)
-        self.w3 = nn.Linear(self.hidden_dim, self.ffn_dim, bias=False)
-
+        self.intermediate_dim = config.intermediate_size
+        self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
+        self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim, self.intermediate_dim))
         self.act_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, nz_hidden_states):
-        current_nz_hidden_states = self.act_fn(self.w1(nz_hidden_states)) * self.w3(
-            nz_hidden_states
-        )
-        current_nz_hidden_states = self.w2(current_nz_hidden_states)
-        return current_nz_hidden_states
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        top_k_index: torch.Tensor,
+        top_k_weights: torch.Tensor,
+    ) -> torch.Tensor:
+        final_hidden_states = torch.zeros_like(hidden_states)
+        num_experts = top_k_weights.shape[1]
+        with torch.no_grad():
+            expert_mask = torch.nn.functional.one_hot(top_k_index, num_classes=num_experts + 1)
+            expert_mask = expert_mask.permute(2, 1, 0)
+            expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+
+        for expert_idx in expert_hit:
+            expert_idx = expert_idx[0]
+            if expert_idx == num_experts:
+                continue
+            _, token_idx = torch.where(expert_mask[expert_idx])
+            current_state = hidden_states[token_idx]
+            gate, up = nn.functional.linear(current_state, self.gate_up_proj[expert_idx]).chunk(2, dim=-1)
+            current_hidden_states = self.act_fn(gate) * up
+            current_hidden_states = nn.functional.linear(current_hidden_states, self.down_proj[expert_idx])
+            current_hidden_states = current_hidden_states * top_k_weights[token_idx, expert_idx, None]
+            final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
+
+        return final_hidden_states
+
+
+class UnpaddedMixtralTopKRouter(nn.Module):
+    def __init__(self, config: MixtralConfig):
+        super().__init__()
+        self.top_k = config.num_experts_per_tok
+        self.num_experts = config.num_local_experts
+        self.hidden_dim = config.hidden_size
+        self.weight = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim))
+
+    def forward(self, hidden_states):
+        hidden_states = hidden_states.reshape(-1, self.hidden_dim)
+        router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
+        router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1)
+        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
+        router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        return router_scores, router_indices
 
 
 class UnpaddedMixtralSparseMoeBlock(nn.Module):
-    """
-    This implementation is
-    strictly equivalent to standard MoE with full capacity (no
-    dropped tokens). It's faster since it formulates MoE operations
-    in terms of block-sparse operations to accomodate imbalanced
-    assignments of tokens to experts, whereas standard MoE either
-    (1) drop tokens at the cost of reduced performance or (2) set
-    capacity factor to number of experts and thus waste computation
-    and memory on padding.
-    """
 
-    def __init__(self, config):
+    def __init__(self, config: MixtralConfig):
         super().__init__()
-        self.hidden_dim = config.hidden_size
-        self.ffn_dim = config.intermediate_size
-        self.num_experts = config.num_local_experts
         self.top_k = config.num_experts_per_tok
-
-        # gating
-        self.gate = nn.Linear(self.hidden_dim, self.num_experts, bias=False)
-
-        self.experts = nn.ModuleList(
-            [UnpaddedMixtralBLockSparseTop2MLP(config) for _ in range(self.num_experts)]
-        )
+        self.jitter_noise = config.router_jitter_noise
+        self.gate = UnpaddedMixtralTopKRouter(config)
+        self.experts = UnpaddedMixtralExperts(config)
 
     def forward(self, nz_hidden_states: torch.Tensor) -> torch.Tensor:
-        """ """
         sequence_length, hidden_dim = nz_hidden_states.shape
-        nz_hidden_states = nz_hidden_states.view(-1, hidden_dim)
-        # router_logits: (batch * sequence_length, n_experts)
-        router_logits = self.gate(nz_hidden_states)
-
-        routing_weights = F.softmax(router_logits, dim=1, dtype=torch.float)
-        routing_weights, selected_experts = torch.topk(
-            routing_weights, self.top_k, dim=-1
-        )
-        routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
-        # we cast back to the input dtype
-        routing_weights = routing_weights.to(nz_hidden_states.dtype)
-
-        final_nz_hidden_states = torch.zeros(
-            (sequence_length, hidden_dim),
-            dtype=nz_hidden_states.dtype,
-            device=nz_hidden_states.device,
-        )
-
-        # One hot encode the selected experts to create an expert mask
-        # this will be used to easily index which expert is going to be sollicitated
-        expert_mask = torch.nn.functional.one_hot(
-            selected_experts, num_classes=self.num_experts
-        ).permute(2, 1, 0)
-
-        # Loop over all available experts in the model and perform the computation on each expert
-        for expert_idx in range(self.num_experts):
-            expert_layer = self.experts[expert_idx]
-            idx, top_x = torch.where(expert_mask[expert_idx])
-
-            if top_x.shape[0] == 0:
-                continue
-
-            # in torch it is faster to index using lists than torch tensors
-            top_x_list = top_x.tolist()
-            idx_list = idx.tolist()
-
-            # Index the correct hidden states and compute the expert hidden state for
-            # the current expert. We need to make sure to multiply the output hidden
-            # states by `routing_weights` on the corresponding tokens (top-1 and top-2)
-            current_state = nz_hidden_states[None, top_x_list].reshape(-1, hidden_dim)
-            current_nz_hidden_states = (
-                expert_layer(current_state)
-                * routing_weights[top_x_list, idx_list, None]
-            )
-
-            # However `index_add_` only support torch tensors for indexing so we'll use
-            # the `top_x` tensor here.
-            final_nz_hidden_states.index_add_(
-                0, top_x, current_nz_hidden_states.to(nz_hidden_states.dtype)
-            )
-        final_nz_hidden_states = final_nz_hidden_states.reshape(
-            sequence_length, hidden_dim
-        )
-        return final_nz_hidden_states, router_logits
+        if self.training and self.jitter_noise > 0:
+            nz_hidden_states *= torch.empty_like(nz_hidden_states).uniform_(1.0 - self.jitter_noise, 1.0 + self.jitter_noise)
+        top_k_weights, top_k_index = self.gate(nz_hidden_states)
+        nz_hidden_states = self.experts(nz_hidden_states, top_k_index, top_k_weights)
+        nz_hidden_states = nz_hidden_states.reshape(sequence_length, hidden_dim)
+        return nz_hidden_states, top_k_weights
 
 
 class UnpaddedMixtralDecoderLayer(nn.Module):
@@ -608,9 +614,15 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         loss = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
+            max_length = nz_input_ids.shape[0]
+            latest_seq = nz_input_ids[cu_seqlens[-2]:cu_seqlens[-1]]
+            if (latest_seq == 0).all():
+                attn_length = cu_seqlens[-2]
+            else:
+                attn_length = cu_seqlens[-1]
 
             aux_loss = load_balancing_loss_func(
-                router_logits, self.num_experts, self.num_experts_per_tok
+                router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
             )
 
             acc = (

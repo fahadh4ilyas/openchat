@@ -35,7 +35,7 @@ def _find_multiple(a, b):
 def create_dataset(args, split_name: str) -> NumpyDataset:
     # Load data
     filename = f"{args.data_prefix}.{split_name}"
-    if not os.path.isfile(filename + ".parquet") and not os.path.isfile(filename + ".pickle"):
+    if not (os.path.isfile(filename + ".parquet") or os.path.isfile(filename + ".pickle") or os.path.isfile(filename + ".part000.parquet") or os.path.isfile(filename + ".part000.pickle")):
         print(f"Skipping loading {split_name}")
         return None
 

@@ -3,7 +3,7 @@ import typing
 
 import transformers
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator as validator
 
 
 class Arguments(BaseModel):

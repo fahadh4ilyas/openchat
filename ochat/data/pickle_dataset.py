@@ -41,7 +41,25 @@ def main(args: DataArguments):
             print(f'File {result_filename} already exists. Skipping {filename}...')
             continue
         if not os.path.isfile(filename):
-            print(f'There is no file named {filename}! Skipping...')
+            print(f'There is no file named {filename}! Checking probable parts...')
+            index = 0
+            while True:
+                result_filename = f"{args.data_prefix}.{split}.part{index:03d}.pickle"
+                filename = f"{args.data_prefix}.{split}.part{index:03d}.parquet"
+                if os.path.isfile(result_filename):
+                    print(f'File {result_filename} already exists. Skipping {filename}...')
+                    index += 1
+                    continue
+                if not os.path.isfile(filename):
+                    if index == 0:
+                        print(f'There is no file named {filename}! Skipping...')
+                    break
+                print(f'Read file {filename}...')
+                data = make_dict(filename)
+                print(f'Pickling to file {result_filename}...')
+                with open(result_filename, 'wb') as f:
+                    pickle.dump(data, f)
+                index += 1
             continue
         print(f'Read file {filename}...')
         data = make_dict(filename)

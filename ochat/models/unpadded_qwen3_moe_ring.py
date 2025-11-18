@@ -17,7 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Unpadded & Fused Mixtral model. Compatible with HF. """
+""" PyTorch Unpadded & Fused Qwen3 Moe model. Compatible with HF. """
 
 from typing import Optional, Tuple
 
@@ -29,11 +29,14 @@ from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from transformers.models.mixtral.configuration_mixtral import MixtralConfig
+from transformers.models.qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
+    from ring_flash_attn import (
+        zigzag_ring_flash_attn_func,
+        zigzag_ring_flash_attn_varlen_func,
+    )
 except ImportError:
     print("FlashAttention not found. Install it if you need to train models.")
 
@@ -179,11 +182,11 @@ def apply_rotary_pos_emb(
     return q_embed, k_embed
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Mixtral
-class UnpaddedMixtralRMSNorm(nn.Module):
+# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen3Moe
+class UnpaddedQwen3MoeRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps):
         """
-        UnpaddedMixtralRMSNorm is equivalent to T5LayerNorm
+        UnpaddedQwen3MoeRMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
 
@@ -196,8 +199,8 @@ class UnpaddedMixtralRMSNorm(nn.Module):
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Mixtral
-class UnpaddedMixtralRotaryEmbedding(torch.nn.Module):
+# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Qwen3Moe
+class UnpaddedQwen3MoeRotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
@@ -232,109 +235,30 @@ class UnpaddedMixtralRotaryEmbedding(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-class UnpaddedMixtralAttention(nn.Module):
-    """Multi-headed attention from 'Attention Is All You Need' paper"""
-
-    def __init__(self, config: MixtralConfig):
+class UnpaddedQwen3MoeMLP(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig, intermediate_size=None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = config.num_key_value_heads
-        self.sliding_window = config.sliding_window
-        self.attention_dropout = config.attention_dropout
+        self.intermediate_size = intermediate_size if intermediate_size is not None else config.intermediate_size
 
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
+        self.act_fn = ACT2FN[config.hidden_act]
 
-        self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=False
-        )
-        self.k_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
-        )
-        self.v_proj = nn.Linear(
-            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False
-        )
-        self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=False
-        )
-
-    def forward(
-        self,
-        cos_sin: Tuple[torch.Tensor, torch.Tensor],
-        # Unpadded inputs
-        nz_hidden_states: torch.Tensor,
-        nz_position_ids: torch.LongTensor,
-        cu_seqlens: torch.Tensor,
-        max_seqlen: int,
-        use_fast_rope: bool = False,
-    ) -> torch.Tensor:
-        # nz_hidden_states: [nnz, num_heads, head_dim]
-        # nz_position_ids:  [nnz]
-        # cu_seqlens:       [bs + 1]
-
-        query_states = self.q_proj(nz_hidden_states).view(
-            -1, self.num_heads, self.head_dim
-        )
-        key_states = self.k_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
-        )
-        value_states = self.v_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
-        )
-
-        # RoPE
-        cos, sin = cos_sin
-        query_states, key_states = apply_rotary_pos_emb(
-            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
-        )
-
-        # flash attn
-        if cu_seqlens[-1] == max_seqlen:
-            attn_output = flash_attn_func(
-                q=query_states.unsqueeze(0),
-                k=key_states.unsqueeze(0),
-                v=value_states.unsqueeze(0),
-                dropout_p=self.attention_dropout if self.training else 0.0,
-                causal=True,
-                window_size=(self.sliding_window, self.sliding_window)
-                if self.sliding_window is not None
-                else (-1, -1),
-            )
-        else:
-            attn_output = flash_attn_varlen_func(
-                q=query_states,
-                k=key_states,
-                v=value_states,
-                cu_seqlens_q=cu_seqlens,
-                cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen,
-                max_seqlen_k=max_seqlen,
-                dropout_p=self.attention_dropout if self.training else 0.0,
-                causal=True,
-                window_size=(self.sliding_window, self.sliding_window)
-                if self.sliding_window is not None
-                else (-1, -1),
-            )
-
-        # attn_output: [total_nnz, num_heads, head_dim]
-        attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
-        return self.o_proj(attn_output)
+    def forward(self, x):
+        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x)), None
 
 
-class UnpaddedMixtralExperts(nn.Module):
+class UnpaddedQwen3MoeExperts(nn.Module):
     """Collection of expert weights stored as 3D tensors."""
 
-    def __init__(self, config: MixtralConfig):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__()
-        self.num_experts = config.num_local_experts
+        self.num_experts = config.num_experts
         self.hidden_dim = config.hidden_size
-        self.intermediate_dim = config.intermediate_size
+        self.intermediate_dim = config.moe_intermediate_size
         self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * self.intermediate_dim, self.hidden_dim))
         self.down_proj = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim, self.intermediate_dim))
         self.act_fn = ACT2FN[config.hidden_act]
@@ -367,54 +291,145 @@ class UnpaddedMixtralExperts(nn.Module):
         return final_hidden_states
 
 
-class UnpaddedMixtralTopKRouter(nn.Module):
-    def __init__(self, config: MixtralConfig):
+class UnpaddedQwen3MoeTopKRouter(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__()
         self.top_k = config.num_experts_per_tok
-        self.num_experts = config.num_local_experts
+        self.num_experts = config.num_experts
+        self.norm_topk_prob = config.norm_topk_prob
         self.hidden_dim = config.hidden_size
-        self.weight = nn.Parameter(torch.empty(self.num_experts, self.hidden_dim))
+        self.weight = nn.Parameter(torch.zeros(self.num_experts, self.hidden_dim))
 
     def forward(self, hidden_states):
         hidden_states = hidden_states.reshape(-1, self.hidden_dim)
         router_logits = F.linear(hidden_states, self.weight)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1)
+        router_logits = torch.nn.functional.softmax(router_logits, dtype=torch.float, dim=-1)
         router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
-        router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
+        if self.norm_topk_prob:
+            router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
+        router_top_value = router_top_value.to(router_logits.dtype)
         router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
         return router_scores, router_indices
 
 
-class UnpaddedMixtralSparseMoeBlock(nn.Module):
-
-    def __init__(self, config: MixtralConfig):
+class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__()
-        self.top_k = config.num_experts_per_tok
-        self.jitter_noise = config.router_jitter_noise
-        self.gate = UnpaddedMixtralTopKRouter(config)
-        self.experts = UnpaddedMixtralExperts(config)
+        self.experts = UnpaddedQwen3MoeExperts(config)
+        self.router = UnpaddedQwen3MoeTopKRouter(config)
 
-    def forward(self, nz_hidden_states: torch.Tensor) -> torch.Tensor:
-        sequence_length, hidden_dim = nz_hidden_states.shape
-        if self.training and self.jitter_noise > 0:
-            nz_hidden_states *= torch.empty_like(nz_hidden_states).uniform_(1.0 - self.jitter_noise, 1.0 + self.jitter_noise)
-        top_k_weights, top_k_index = self.gate(nz_hidden_states)
-        nz_hidden_states = self.experts(nz_hidden_states, top_k_index, top_k_weights)
-        nz_hidden_states = nz_hidden_states.reshape(sequence_length, hidden_dim)
-        return nz_hidden_states, top_k_weights
+    def forward(self, nz_hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        routing_weights, selected_experts = self.router(nz_hidden_states)
+        final_hidden_states = self.experts(nz_hidden_states, selected_experts, routing_weights)
+        return final_hidden_states, routing_weights
 
 
-class UnpaddedMixtralDecoderLayer(nn.Module):
-    def __init__(self, config: MixtralConfig):
+class UnpaddedQwen3MoeAttention(nn.Module):
+    """Multi-headed attention from 'Attention Is All You Need' paper"""
+
+    def __init__(self, config: Qwen3MoeConfig, layer_idx: Optional[int] = None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.self_attn = UnpaddedMixtralAttention(config=config)
-        self.block_sparse_moe = UnpaddedMixtralSparseMoeBlock(config=config)
-        self.input_layernorm = UnpaddedMixtralRMSNorm(
+        self.layer_idx = layer_idx
+        self.max_window_layers = config.max_window_layers
+        self.num_attention_heads = config.num_attention_heads
+        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.scaling = self.head_dim**-0.5
+        self.sliding_window = config.sliding_window
+        self.attention_dropout = config.attention_dropout
+        self.use_sliding_window = config.use_sliding_window
+
+        self.q_proj = nn.Linear(
+            self.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
+        )
+        self.k_proj = nn.Linear(
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+        )
+        self.v_proj = nn.Linear(
+            self.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
+        )
+        self.o_proj = nn.Linear(
+            config.num_attention_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
+        )
+        self.q_norm = UnpaddedQwen3MoeRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # unlike olmo, only on the head dim!
+        self.k_norm = UnpaddedQwen3MoeRMSNorm(self.head_dim, eps=config.rms_norm_eps)  # thus post q_norm does not need reshape
+
+    def forward(
+        self,
+        cos_sin: Tuple[torch.Tensor, torch.Tensor],
+        # Unpadded inputs
+        nz_hidden_states: torch.Tensor,
+        nz_position_ids: torch.LongTensor,
+        cu_seqlens: torch.Tensor,
+        max_seqlen: int,
+        use_fast_rope: bool = False,
+        use_fast_norm: bool = False,
+    ) -> torch.Tensor:
+        # nz_hidden_states: [nnz, num_heads, head_dim]
+        # nz_position_ids:  [nnz]
+        # cu_seqlens:       [bs + 1]
+
+        input_shape = nz_hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_norm(self.q_proj(nz_hidden_states).view(
+            *hidden_shape
+        ), use_fast_norm)
+        key_states = self.k_norm(self.k_proj(nz_hidden_states).view(
+            *hidden_shape
+        ), use_fast_norm)
+        value_states = self.v_proj(nz_hidden_states).view(
+            *hidden_shape
+        )
+
+        # RoPE
+        cos, sin = cos_sin
+        query_states, key_states = apply_rotary_pos_emb(
+            query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
+        )
+
+        # flash attn
+        if cu_seqlens[-1] == max_seqlen:
+            attn_output = zigzag_ring_flash_attn_func(
+                q=query_states.unsqueeze(0),
+                k=key_states.unsqueeze(0),
+                v=value_states.unsqueeze(0),
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
+        else:
+            attn_output = zigzag_ring_flash_attn_varlen_func(
+                q=query_states,
+                k=key_states,
+                v=value_states,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=True,
+            )
+
+        # attn_output: [total_nnz, num_heads, head_dim]
+        attn_output = attn_output.view(-1, self.num_attention_heads * self.head_dim)  # type: ignore
+        return self.o_proj(attn_output)
+
+
+class UnpaddedQwen3MoeDecoderLayer(nn.Module):
+    def __init__(self, config: Qwen3MoeConfig, layer_idx: Optional[int] = None):
+        super().__init__()
+
+        self.hidden_size = config.hidden_size
+        self.self_attn = UnpaddedQwen3MoeAttention(config=config, layer_idx=layer_idx)
+        if (layer_idx not in config.mlp_only_layers) and (
+            config.num_experts > 0 and (layer_idx + 1) % config.decoder_sparse_step == 0
+        ):
+            self.mlp = UnpaddedQwen3MoeSparseMoeBlock(config)
+        else:
+            self.mlp = UnpaddedQwen3MoeMLP(config, intermediate_size=config.intermediate_size)
+        self.input_layernorm = UnpaddedQwen3MoeRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.post_attention_layernorm = UnpaddedMixtralRMSNorm(
+        self.post_attention_layernorm = UnpaddedQwen3MoeRMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
@@ -440,6 +455,7 @@ class UnpaddedMixtralDecoderLayer(nn.Module):
             cu_seqlens=cu_seqlens,
             max_seqlen=max_seqlen,
             use_fast_rope=use_fast_rope,
+            use_fast_norm=use_fast_norm,
         )
         nz_hidden_states = residual + nz_hidden_states
 
@@ -449,17 +465,17 @@ class UnpaddedMixtralDecoderLayer(nn.Module):
         nz_hidden_states = self.post_attention_layernorm(
             nz_hidden_states, use_fast_norm
         )
-        nz_hidden_states, router_logits = self.block_sparse_moe(nz_hidden_states)
+        nz_hidden_states, router_logits = self.mlp(nz_hidden_states)
         nz_hidden_states = residual + nz_hidden_states
 
         return nz_hidden_states, router_logits
 
 
-class UnpaddedMixtralPreTrainedModel(PreTrainedModel):
-    config_class = MixtralConfig
+class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
+    config_class = Qwen3MoeConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["UnpaddedMixtralDecoderLayer"]
+    _no_split_modules = ["UnpaddedQwen3MoeDecoderLayer"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -473,15 +489,15 @@ class UnpaddedMixtralPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
+class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedMixtralDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedQwen3MoeDecoderLayer`]
 
     Args:
-        config: MixtralConfig
+        config: Qwen3MoeConfig
     """
 
-    def __init__(self, config: MixtralConfig):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -489,19 +505,19 @@ class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        self.rotary_emb = UnpaddedMixtralRotaryEmbedding(
-            config.hidden_size // config.num_attention_heads,
-            max_position_embeddings=2048,
+        self.rotary_emb = UnpaddedQwen3MoeRotaryEmbedding(
+            getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
+            max_position_embeddings=config.max_position_embeddings,
             base=config.rope_theta,
         )
 
         self.layers = nn.ModuleList(
             [
-                UnpaddedMixtralDecoderLayer(config)
-                for _ in range(config.num_hidden_layers)
+                UnpaddedQwen3MoeDecoderLayer(config, layer_idx)
+                for layer_idx in range(config.num_hidden_layers)
             ]
         )
-        self.norm = UnpaddedMixtralRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = UnpaddedQwen3MoeRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -551,23 +567,22 @@ class UnpaddedMixtralModel(UnpaddedMixtralPreTrainedModel):
                     use_fast_norm=use_fast_norm,
                     use_fast_rope=use_fast_rope,
                 )
-            all_router_logits += (router_logits,)
+            if router_logits is not None:
+                all_router_logits += (router_logits,)
 
         nz_hidden_states = self.norm(nz_hidden_states, use_fast_norm)
 
         return nz_hidden_states, all_router_logits
 
 
-class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
-    _tied_weights_keys = ["lm_head.weight"]
-
-    def __init__(self, config):
+class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
+    def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
-        self.model = UnpaddedMixtralModel(config)
-        self.vocab_size = config.vocab_size
+        self.model = UnpaddedQwen3MoeModel(config)
+
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.router_aux_loss_coef = config.router_aux_loss_coef
-        self.num_experts = config.num_local_experts
+        self.num_experts = config.num_experts
         self.num_experts_per_tok = config.num_experts_per_tok
 
         # Initialize weights and apply final processing
@@ -598,10 +613,10 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
-        num_seq: int = 0,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
@@ -630,40 +645,22 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                 router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
             )
 
-            if num_seq > 0:
-                acc = (
-                    weighted_token_accuracy(
-                        logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
-                    )
-                    / num_seq
-                )
-                loss = (
-                    (
-                        weighted_cross_entropy(
-                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
-                        )
-                        / num_seq
-                        + self.router_aux_loss_coef * aux_loss,
-                        self.router_aux_loss_coef * aux_loss,
-                    ),
-                    acc,
-                )
-            else:
-                acc = weighted_token_accuracy(
+            acc = (
+                weighted_token_accuracy(
                     logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
                 )
-                loss = (
-                    (
-                        weighted_cross_entropy(
-                            logits, nz_shifted_label_ids, nz_shifted_loss_weights
-                        )
-                        + self.router_aux_loss_coef * aux_loss,
-                        self.router_aux_loss_coef * aux_loss,
-                    ),
-                    acc,
+                / total_seqs
+            )
+            loss = (
+                weighted_cross_entropy(
+                    logits, nz_shifted_label_ids, nz_shifted_loss_weights
                 )
+                / total_seqs
+                + self.router_aux_loss_coef * aux_loss,
+                self.router_aux_loss_coef * aux_loss,
+            )
 
         return CausalLMOutputWithPast(
-            loss=loss,  # type: ignore
+            loss=(loss, acc),  # type: ignore
             logits=logits,
         )
