@@ -25,7 +25,6 @@ import math
 import torch
 import torch.nn.functional as F
 import torch.distributed as dist
-import torch.utils.checkpoint
 from torch import nn
 
 from transformers.activations import ACT2FN
