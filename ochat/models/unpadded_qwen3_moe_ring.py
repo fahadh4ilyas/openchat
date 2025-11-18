@@ -477,6 +477,7 @@ class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["UnpaddedQwen3MoeDecoderLayer"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         std = self.config.initializer_range
         if isinstance(module, nn.Linear):
@@ -488,10 +489,10 @@ class UnpaddedQwen3MoePreTrainedModel(PreTrainedModel):
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, UnpaddedQwen3MoeExperts):
-            module.gate_up_proj.data.normal_(mean=0.0, std=std)
-            module.down_proj.data.normal_(mean=0.0, std=std)
+            nn.init.normal_(module.gate_up_proj, mean=0.0, std=std)
+            nn.init.normal_(module.down_proj, mean=0.0, std=std)
         elif isinstance(module, UnpaddedQwen3MoeTopKRouter):
-            module.weight.data.normal_(mean=0.0, std=std)
+            nn.init.normal_(module.weight, mean=0.0, std=std)
 
 
 class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
