@@ -587,7 +587,7 @@ class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
             assert nz_shifted_loss_weights is not None
             max_length = nz_input_ids.shape[0]
             latest_seq = nz_input_ids[cu_seqlens[-2]:cu_seqlens[-1]]
-            if (latest_seq == 0).all():
+            if latest_seq.sum() == 0:
                 attn_length = cu_seqlens[-2]
             else:
                 attn_length = cu_seqlens[-1]
