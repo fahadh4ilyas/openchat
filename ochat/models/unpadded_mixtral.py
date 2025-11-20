@@ -583,7 +583,7 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
             else:
                 attn_length = cu_seqlens[-1]
 
-            aux_loss = load_balancing_loss_func(
+            aux_loss = self.router_aux_loss_coef * load_balancing_loss_func(
                 router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
             )
 
@@ -600,8 +600,8 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                             logits, nz_shifted_label_ids, nz_shifted_loss_weights
                         )
                         / num_seq
-                        + self.router_aux_loss_coef * aux_loss,
-                        self.router_aux_loss_coef * aux_loss,
+                        + aux_loss,
+                        aux_loss,
                     ),
                     acc,
                 )
@@ -614,8 +614,8 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                         weighted_cross_entropy(
                             logits, nz_shifted_label_ids, nz_shifted_loss_weights
                         )
-                        + self.router_aux_loss_coef * aux_loss,
-                        self.router_aux_loss_coef * aux_loss,
+                        + aux_loss,
+                        aux_loss,
                     ),
                     acc,
                 )

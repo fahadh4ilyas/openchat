@@ -66,6 +66,7 @@ class TrainingArguments(BaseModel):
     eps: float = Field(1e-5)
     use_fast_norm: bool = Field(False)
     use_fast_rope: bool = Field(False)
+    torch_empty_cache_steps: Optional[int] = Field(None, gt=0)
     tracking_uri: Optional[str] = Field(None)
     mlflow_username: Optional[str] = Field(None)
     mlflow_password: Optional[str] = Field(None)
@@ -140,6 +141,11 @@ def parse_args() -> argparse.Namespace:
     # FAST FORWARD
     parser_base.add_argument("--use_fast_norm", action="store_true")
     parser_base.add_argument("--use_fast_rope", action="store_true")
+
+    # CACHING
+    parser_base.add_argument(
+        "--torch_empty_cache_steps", type=int, default=None
+    )
 
     # MLFLOW
     parser_base.add_argument("--tracking_uri", type=str, default=None)
@@ -399,6 +405,10 @@ def train(args: TrainingArguments):
 
             dist.reduce(loss, 0)
             dist.reduce(acc, 0)
+
+            del batch_tensor
+            if args.torch_empty_cache_steps is not None and step % args.torch_empty_cache_steps == 0:
+                torch.cuda.empty_cache()
 
             # Logging
             if RANK == 0:
