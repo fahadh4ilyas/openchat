@@ -19,10 +19,9 @@
 # limitations under the License.
 """ PyTorch Unpadded & Fused Mixtral model. Compatible with HF. """
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from transformers.activations import ACT2FN
@@ -48,8 +47,8 @@ logger = logging.get_logger(__name__)
 
 
 def load_balancing_loss_func(
-    gate_logits: torch.Tensor, num_experts: torch.Tensor = None, top_k=2, attn_length: int = None, max_length: int = None
-) -> float:
+    gate_logits: torch.Tensor, num_experts: Optional[int] = None, top_k: int = 2, attn_length: Optional[int] = None, max_length: Optional[int] = None
+) -> Union[torch.Tensor, int]:
     r"""
     Computes auxiliary load balancing loss as in Switch Transformer - implemented in Pytorch.
 
