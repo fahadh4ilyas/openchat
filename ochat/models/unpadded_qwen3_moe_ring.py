@@ -447,7 +447,7 @@ class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
         )
         self.rotary_emb = UnpaddedQwen3MoeRotaryEmbedding(
             getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
-            max_position_embeddings=config.max_position_embeddings,
+            max_position_embeddings=2048,
             base=config.rope_theta,
         )
 
