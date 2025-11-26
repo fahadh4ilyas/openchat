@@ -92,6 +92,7 @@ def apply_rotary_pos_emb(
     # q, k:     [num_heads, nnz, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    base_dtype = q.dtype
     h, s, d = q.shape
     q = q.view(h, s, d // 2, 2).transpose(3, 2).reshape(h, s, d)
 
@@ -108,7 +109,7 @@ def apply_rotary_pos_emb(
         sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
         q_embed = (q * cos) + (rotate_half(q) * sin)
         k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed.transpose(0, 1), k_embed.transpose(0, 1)
+    return q_embed.transpose(0, 1).to(base_dtype), k_embed.transpose(0, 1).to(base_dtype)
 
 
 # Inverse dim formula to find dim based on number of rotations
