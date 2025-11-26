@@ -76,7 +76,7 @@ def parse_args() -> (
         argparse.Namespace, argparse.Namespace, argparse.Namespace
     ]
 ):
-    parser_base = argparse.ArgumentParser()
+    parser_base = argparse.ArgumentParser(add_help=False)
     parser_lora_confirm = argparse.ArgumentParser(add_help=False)
     parser_lora = argparse.ArgumentParser(add_help=False)
 
