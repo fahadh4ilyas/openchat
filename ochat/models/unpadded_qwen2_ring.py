@@ -92,13 +92,15 @@ def apply_rotary_pos_emb(
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    base_dtype = q.dtype
     if fast_rope:
-        return fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
-    cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+        q_embed, k_embed = fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
+    else:
+        cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.to(base_dtype), k_embed.to(base_dtype)
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen2

@@ -99,7 +99,7 @@ class TrainingArguments(BaseModel):
 
 
 def parse_args() -> Tuple[argparse.Namespace, argparse.Namespace]:
-    parser_base = argparse.ArgumentParser()
+    parser_base = argparse.ArgumentParser(add_help=False)
     parser_ring_confirm = argparse.ArgumentParser(add_help=False)
     # Distributed
     parser_base.add_argument("--local_rank", type=int, required=True)

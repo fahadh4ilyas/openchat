@@ -89,13 +89,15 @@ def apply_rotary_pos_emb(
     # q, k:     [nnz, num_heads, head_dim]
     # position_ids: [nnz]
     # cos, sin: [max_seq_len, head_dim]
+    base_dtype = q.dtype
     if fast_rope:
-        return fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
-    cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
+        q_embed, k_embed = fast_rope_embedding(q, k, cos[position_ids], sin[position_ids])
+    else:
+        cos = cos[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        sin = sin[position_ids].unsqueeze(-2)  # [nnz, 1, head_dim]
+        q_embed = (q * cos) + (rotate_half(q) * sin)
+        k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed.to(base_dtype), k_embed.to(base_dtype)
 
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen3
@@ -359,7 +361,7 @@ class UnpaddedQwen3Model(UnpaddedQwen3PreTrainedModel):
         )
         self.rotary_emb = UnpaddedQwen3RotaryEmbedding(
             getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
-            max_position_embeddings=config.max_position_embeddings,
+            max_position_embeddings=2048,
             base=config.rope_theta,
         )
 
