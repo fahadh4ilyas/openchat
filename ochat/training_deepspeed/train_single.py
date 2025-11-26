@@ -324,7 +324,10 @@ def train(args: TrainingArguments):
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
                 save_path = os.path.join(args.save_path, f"checkpoint_{step}")
 
-                model.save_pretrained(save_path)  # type: ignore
+                try:
+                    model.save_pretrained(save_path)  # type: ignore
+                except RuntimeError:
+                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
 
                 # Write metadata
                 save_openchat_metadata(args, epoch + 1, step, save_path)
@@ -390,7 +393,10 @@ def train(args: TrainingArguments):
             ):
                 save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
-                model.save_pretrained(save_path)  # type: ignore
+                try:
+                    model.save_pretrained(save_path)  # type: ignore
+                except RuntimeError:
+                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
 
                 # Also save tokenizer from base model
                 save_tokenizer(args, save_path)
@@ -476,7 +482,10 @@ def train(args: TrainingArguments):
             ):
                 save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
-                model.save_pretrained(save_path)  # type: ignore
+                try:
+                    model.save_pretrained(save_path)  # type: ignore
+                except RuntimeError:
+                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
 
                 # Also save tokenizer from base model
                 save_tokenizer(args, save_path)
