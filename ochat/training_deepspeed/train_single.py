@@ -391,7 +391,7 @@ def train(args: TrainingArguments):
                 and args.save_every
                 and (step % args.save_every == 0)
             ):
-                save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
+                save_path = os.path.join(args.save_path, f"st_{step}")
 
                 try:
                     model.save_pretrained(save_path)  # type: ignore
@@ -469,8 +469,6 @@ def train(args: TrainingArguments):
                 model.train()
 
             ############ Save Checkpoint
-            # Save model with lean state dict
-            # https://deepspeed.readthedocs.io/en/latest/model-checkpointing.html
             if (
                 (step == train_total_steps)
                 or (epoch + 1 == args.epochs)
