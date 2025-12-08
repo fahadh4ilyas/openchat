@@ -510,6 +510,18 @@ def train(args: TrainingArguments):
                 # Write metadata
                 save_openchat_metadata(args, epoch + 1, step, save_path)
 
+    progress_bar.close()
+
+    save_path = args.save_path
+
+    model.save_pretrained(save_path)  # type: ignore
+
+    # Also save tokenizer from base model
+    save_tokenizer(args, save_path)
+
+    # Write metadata
+    save_openchat_metadata(args, epoch + 1, step, save_path)
+
     mlflow.end_run()
 
 
