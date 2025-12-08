@@ -296,7 +296,7 @@ def create_model(args: TrainingArguments):
     return model_engine, optimizer
 
 
-@mlflow_stopper_wrapper
+@mlflow_stopper_wrapper()
 def train(args: TrainingArguments):
     deepspeed.init_distributed(dist_backend="nccl")
     dsconfig = HfDeepSpeedConfig(args.deepspeed_config)

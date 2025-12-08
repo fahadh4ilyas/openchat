@@ -182,17 +182,23 @@ def calculate_auto_lr(
     return lr
 
 
-def mlflow_stopper_wrapper(function):
+def mlflow_stopper_wrapper(is_distributed: bool = True):
+    def _wrapper(function):
 
-    def mlflow_stopper(args):
+        def mlflow_stopper(args):
 
-        try:
-            function(args)
-        except:
-            raise
-        finally:
-            RANK = dist.get_rank()
-            if RANK == 0:
-                mlflow.end_run()
+            try:
+                function(args)
+            except:
+                raise
+            finally:
+                if not is_distributed:
+                    mlflow.end_run()
+                else:
+                    RANK = dist.get_rank()
+                    if RANK == 0:
+                        mlflow.end_run()
+        
+        return mlflow_stopper
     
-    return mlflow_stopper
+    return _wrapper

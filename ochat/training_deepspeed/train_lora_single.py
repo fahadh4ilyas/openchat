@@ -233,7 +233,7 @@ def create_model(args: TrainingArguments):
     return model, optimizer
 
 
-@mlflow_stopper_wrapper
+@mlflow_stopper_wrapper(is_distributed=False)
 def train(args: TrainingArguments):
     # Dataset
     train_dataset = create_dataset(args, "train")
