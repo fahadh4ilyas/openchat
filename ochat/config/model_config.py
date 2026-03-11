@@ -1,8 +1,7 @@
-from transformers.modeling_utils import PreTrainedModel
-from transformers.tokenization_utils import PreTrainedTokenizerBase
+from transformers import PreTrainedModel, PreTrainedTokenizerBase, ProcessorMixin
 from functools import partial
 from typing import Callable, Union
-from .conversation_template import ConversationTemplate, ChatMLConversationTemplate
+from .conversation_template import ConversationTemplate, ChatMLConversationTemplate, DeepseekConversationTemplate
 
 from pydantic import BaseModel
 
@@ -10,12 +9,12 @@ from pydantic import BaseModel
 class ModelConfig(BaseModel):
     # Model
     model_max_context: int
-    model_tokenizer_create: Callable[..., PreTrainedTokenizerBase]
+    model_tokenizer_create: Callable[..., Union[PreTrainedTokenizerBase, ProcessorMixin]]
     model_create_for_training: Callable[..., PreTrainedModel]
 
     # conversation template
     conversation_template: Union[
-        partial[ConversationTemplate], partial[ChatMLConversationTemplate]
+        partial[ConversationTemplate], partial[ChatMLConversationTemplate], partial[DeepseekConversationTemplate]
     ]
 
     class Config:

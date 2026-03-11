@@ -11,6 +11,8 @@ from typing import Dict, Union, Optional
 from pathlib import Path
 from functools import partial
 
+from transformers import ProcessorMixin
+
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 
@@ -43,8 +45,10 @@ def create_dataset(args, split_name: str) -> NumpyDataset:
     return NumpyDataset(filename)
 
 
-def batch_to_tensor(batch: Dict[str, np.ndarray]):
+def batch_to_tensor(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = None, processor: Optional[ProcessorMixin] = None):
     # Concat batches
+    images_list = sum([b.tolist() for b in batch['images']], start=[])
+    videos_list = sum([b.tolist() for b in batch['videos']], start=[])
     batch = {k: np.concatenate(batch[k], axis=0) for k in BATCH_KEYS.keys()}
 
     # Pad an unused item to reach multiple of 64, for faster GEMM
@@ -71,6 +75,17 @@ def batch_to_tensor(batch: Dict[str, np.ndarray]):
     batch_tensor: Dict[str, torch.Tensor] = {}
     for k, dtype in BATCH_KEYS.items():
         batch_tensor[k] = torch.from_numpy(batch[k]).to(dtype)
+    if processor is not None:
+        if images_list:
+            images_list = [os.path.join(dataset_path, img) for img in images_list]
+            output_images = processor.image_processor(images_list)
+            batch_tensor["pixel_values"] = output_images["pixel_values"]
+            batch_tensor["image_grid_thw"] = output_images["image_grid_thw"]
+        if videos_list:
+            videos_list = [os.path.join(dataset_path, vid) for vid in videos_list]
+            output_videos = processor.video_processor(videos_list)
+            batch_tensor["pixel_values_videos"] = output_videos["pixel_values_videos"]
+            batch_tensor["video_grid_thw"] = output_videos["video_grid_thw"]
 
     # cu seqlens
     batch_tensor["cu_seqlens"] = torch.nn.functional.pad(
@@ -141,6 +156,10 @@ def save_tokenizer(args, save_path):
     MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(
         args.model_path
     ).save_pretrained(save_path)
+
+
+def load_tokenizer(args):
+    return MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(args.model_path)
 
 
 def save_openchat_metadata(

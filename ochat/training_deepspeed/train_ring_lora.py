@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+from functools import partial
 from typing import Optional, Union, Literal, List
 
 from pydantic import BaseModel, Field, field_validator as validator
@@ -24,6 +25,7 @@ from ochat.training_deepspeed.utils import (
     save_openchat_metadata,
     clean_checkpoint,
     save_tokenizer,
+    load_tokenizer,
 )
 from ochat.training_deepspeed.multipack_dataloader_ring import (
     MultipackDistributedDataloader,
@@ -43,6 +45,7 @@ class TrainingArguments(BaseModel):
     local_rank: int = Field(...)
     model_path: str = Field(...)
     model_type: Optional[str] = Field(None)
+    has_processor: Optional[bool] = Field(None)
     data_prefix: str = Field(...)
     save_path: str = Field(...)
     save_every: Optional[int] = Field(None, gt=0)
@@ -182,12 +185,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
+    collate_fn = batch_to_tensor
+    if args.has_processor:
+        tokenizer = load_tokenizer(args)
+        collate_fn = partial(batch_to_tensor, dataset_path=os.path.dirname(args.data_prefix), processor=tokenizer)
     # Multipack dataloader
     return MultipackDistributedDataloader(
         dataset=data,
         lengths=data["total_length"],
         batch_max_length=args.batch_max_len,
-        collate_fn=batch_to_tensor,
+        collate_fn=collate_fn,
         seed=0,
     )
 
@@ -311,6 +318,7 @@ def train(args: TrainingArguments):
 
     # Load model type
     args.model_type = train_dataset.metadata["model_type"]
+    args.has_processor = train_dataset.metadata.get("has_processor", False)
 
     # Data Loader
     train_loader = create_distributed_dataloader(args, train_dataset)

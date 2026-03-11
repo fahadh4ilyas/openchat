@@ -19,7 +19,7 @@ dependencies = [
     "orjson", 
     "torch>=2.1.0", 
     "sentencepiece", 
-    "transformers>=4.41.0",
+    "transformers>=5.2.0",
     "peft",
     "bitsandbytes",
     "accelerate", 
