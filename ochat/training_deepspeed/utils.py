@@ -51,25 +51,25 @@ def batch_to_tensor(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = 
     videos_list = sum([b.tolist() for b in batch['videos']], start=[])
     batch = {k: np.concatenate(batch[k], axis=0) for k in BATCH_KEYS.keys()}
 
-    # Pad an unused item to reach multiple of 64, for faster GEMM
-    total_seqlen = batch["nz_input_ids"].size
-    pad_len = _find_multiple(total_seqlen, 64) - total_seqlen
+    # # Pad an unused item to reach multiple of 64, for faster GEMM
+    # total_seqlen = batch["nz_input_ids"].size
+    # pad_len = _find_multiple(total_seqlen, 64) - total_seqlen
 
-    if pad_len > 0:
-        assert pad_len < 64
+    # if pad_len > 0:
+    #     assert pad_len < 64
 
-        # total length
-        padding_specs = {
-            "seqlens": (1, pad_len),
-            "nz_input_ids": (pad_len, PAD_ID),
-            "nz_position_ids": (pad_len, 0),
-            "nz_shifted_label_ids": (pad_len, PAD_ID),
-            "nz_shifted_loss_weights": (pad_len, 0),
-        }
-        for k, pad_spec in padding_specs.items():
-            batch[k] = np.concatenate(
-                (batch[k], np.full(*pad_spec, dtype=batch[k].dtype)), axis=0
-            )
+    #     # total length
+    #     padding_specs = {
+    #         "seqlens": (1, pad_len),
+    #         "nz_input_ids": (pad_len, PAD_ID),
+    #         "nz_position_ids": (pad_len, 0),
+    #         "nz_shifted_label_ids": (pad_len, PAD_ID),
+    #         "nz_shifted_loss_weights": (pad_len, 0),
+    #     }
+    #     for k, pad_spec in padding_specs.items():
+    #         batch[k] = np.concatenate(
+    #             (batch[k], np.full(*pad_spec, dtype=batch[k].dtype)), axis=0
+    #         )
 
     # to tensor
     batch_tensor: Dict[str, torch.Tensor] = {}

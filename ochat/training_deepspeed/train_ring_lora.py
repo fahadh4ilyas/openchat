@@ -318,7 +318,7 @@ def train(args: TrainingArguments):
 
     # Load model type
     args.model_type = train_dataset.metadata["model_type"]
-    args.has_processor = train_dataset.metadata.get("has_processor", False)
+    args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
 
     # Data Loader
     train_loader = create_distributed_dataloader(args, train_dataset)

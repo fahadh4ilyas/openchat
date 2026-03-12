@@ -227,10 +227,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
 def generate_split(conversations: list, split_name: str, args: DataArguments):
     from ochat.config import MODEL_CONFIG_MAP
     # schema
-    metadata = {"model_type": args.model_type, "has_processor": False}
-    model_config = MODEL_CONFIG_MAP[args.model_type]
-    if model_config.model_has_processor:
-        metadata["has_processor"] = True
+    metadata = {"model_type": args.model_type}
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
         pyarrow.field("num_seqs", pyarrow.float32()),
