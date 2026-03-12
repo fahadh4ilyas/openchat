@@ -495,6 +495,7 @@ MODEL_CONFIG_MAP = {
         model_create_for_training=partial(
             ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
         ),
+        model_has_processor=True,
         # Conversation Template
         conversation_template=partial(
             ConversationTemplate,
@@ -974,6 +975,7 @@ MODEL_CONFIG_MAP = {
         model_create_for_training=partial(
             ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
         ),
+        model_has_processor=True,
         # Conversation Template
         conversation_template=partial(
             ChatMLConversationTemplate,

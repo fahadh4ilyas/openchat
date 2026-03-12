@@ -10,7 +10,6 @@ from typing import List, Optional
 import argparse
 from datetime import datetime
 import random
-from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator as validator, ValidationInfo
 
@@ -75,7 +74,6 @@ def truncate_trailing_zero_weighted(tokens: list, weights: list):
     return tokens[: non_zero_index + 1], weights[: non_zero_index + 1]
 
 
-# def add_single_conv(outputs: list, tokens: list, weights: list, pixel_values: list, pixel_values_videos: list, image_grid_thw: list, video_grid_thw: list, args: DataArguments):
 def add_single_conv(outputs: list, tokens: list, weights: list, images: list, videos: list, args: DataArguments):
     # truncate trailing zero weighted tokens
     tokens, weights = truncate_trailing_zero_weighted(tokens, weights)
@@ -122,10 +120,6 @@ def add_single_conv(outputs: list, tokens: list, weights: list, images: list, vi
         "nz_shifted_loss_weights": weights,
         "images": images,
         "videos": videos,
-        # "pixel_values": pixel_values,
-        # "pixel_values_videos": pixel_values_videos,
-        # "image_grid_thw": image_grid_thw,
-        # "video_grid_thw": video_grid_thw
     }
     results["num_seqs"] = sum(results["nz_shifted_loss_weights"])
 
@@ -205,42 +199,16 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     has_video = any([bool(b.videos) for b in curr_batch])
     images_list = [b.images if b.images else [] for b in curr_batch]
     videos_list = [b.videos if b.videos else [] for b in curr_batch]
-    # pixel_values_list = []
-    # pixel_values_videos_list = []
-    # image_grid_thw_list = []
-    # video_grid_thw_list = []
-    # data_path = Path(os.path.abspath(args.in_files[0])).parent
     if has_image and image_processor is None:
         job_print(job_id, "Warning: The tokenizer does not have an image processor but the data contains images. The images will be ignored.")
-        # else:
-        #     for b in curr_batch:
-        #         if b.images:
-        #             abspath_images = [(data_path / img_path).as_posix() for img_path in b.images]
-        #             output = image_processor(images=abspath_images)
-        #             pixel_values_list.append(output["pixel_values"].tolist())
-        #             image_grid_thw_list.append(output["image_grid_thw"].tolist())
-        #         else:
-        #             pixel_values_list.append([])
-        #             image_grid_thw_list.append([])
     if has_video and video_processor is None:
             job_print(job_id, "Warning: The tokenizer does not have a video processor but the data contains videos. The videos will be ignored.")
-        # else:
-        #     for b in curr_batch:
-        #         if b.videos:
-        #             abspath_videos = [(data_path / video_path).as_posix() for video_path in b.videos]
-        #             output = video_processor(videos=abspath_videos)
-        #             pixel_values_videos_list.append(output["pixel_values_videos"].tolist())
-        #             video_grid_thw_list.append(output["video_grid_thw"].tolist())
-        #         else:
-        #             pixel_values_videos_list.append([])
-        #             video_grid_thw_list.append([])
 
     # Generate data
     job_print(job_id, "Generating ...")
     max_context = args.max_seq_length or model_config.model_max_context
 
     outputs = []
-    # for tokens, weights, pixel_values, pixel_values_videos, image_grid_thw, video_grid_thw in zip(tokens_list, weights_list, pixel_values_list, pixel_values_videos_list, image_grid_thw_list, video_grid_thw_list):
     for tokens, weights, images, videos in zip(tokens_list, weights_list, images_list, videos_list):
         assert len(tokens) == len(weights)
 
@@ -249,7 +217,6 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         weights = weights[:max_context]
 
         # Add to results
-        # add_single_conv(outputs, tokens, weights, pixel_values, pixel_values_videos, image_grid_thw, video_grid_thw, args)
         add_single_conv(outputs, tokens, weights, images, videos, args)
 
     job_print(job_id, "Chunk finish")
@@ -262,8 +229,7 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
     # schema
     metadata = {"model_type": args.model_type, "has_processor": False}
     model_config = MODEL_CONFIG_MAP[args.model_type]
-    tokenizer = model_config.model_tokenizer_create(args.model_path)
-    if "processor" in tokenizer.__class__.__name__.lower():
+    if model_config.model_has_processor:
         metadata["has_processor"] = True
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),

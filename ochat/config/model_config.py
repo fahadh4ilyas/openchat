@@ -11,6 +11,7 @@ class ModelConfig(BaseModel):
     model_max_context: int
     model_tokenizer_create: Callable[..., Union[PreTrainedTokenizerBase, ProcessorMixin]]
     model_create_for_training: Callable[..., PreTrainedModel]
+    model_has_processor: bool = False
 
     # conversation template
     conversation_template: Union[

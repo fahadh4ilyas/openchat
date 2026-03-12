@@ -76,12 +76,12 @@ def batch_to_tensor(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = 
     for k, dtype in BATCH_KEYS.items():
         batch_tensor[k] = torch.from_numpy(batch[k]).to(dtype)
     if processor is not None:
-        if images_list:
+        if images_list and hasattr(processor, "image_processor") and processor.image_processor is not None:
             images_list = [os.path.join(dataset_path, img) for img in images_list]
             output_images = processor.image_processor(images_list)
             batch_tensor["pixel_values"] = output_images["pixel_values"]
             batch_tensor["image_grid_thw"] = output_images["image_grid_thw"]
-        if videos_list:
+        if videos_list and hasattr(processor, "video_processor") and processor.video_processor is not None:
             videos_list = [os.path.join(dataset_path, vid) for vid in videos_list]
             output_videos = processor.video_processor(videos_list)
             batch_tensor["pixel_values_videos"] = output_videos["pixel_values_videos"]
