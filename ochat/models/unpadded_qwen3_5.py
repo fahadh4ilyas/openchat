@@ -533,6 +533,9 @@ def compute_packed_mrope_positions(
         start = cu_seqlens[b].item()
         end   = cu_seqlens[b+1].item()
 
+        if (nz_input_ids[start:end] == 0).all():
+            continue
+
         seq_types = mm_token_type_ids[start:end]
 
         current_pos = 0
