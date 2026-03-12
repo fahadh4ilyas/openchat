@@ -410,6 +410,7 @@ class UnpaddedQwen3_5PreTrainedModel(PreTrainedModel):
     config: Qwen3_5Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
+    _supports_flash_attn = True
     _no_split_modules = ["UnpaddedQwen3_5DecoderLayer", "Qwen3_5VisionBlock"]
     _keys_to_ignore_on_load_unexpected = [r"^mtp.*"]
     _is_stateful = True
