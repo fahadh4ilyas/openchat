@@ -493,7 +493,7 @@ MODEL_CONFIG_MAP = {
         model_max_context=262144,
         model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
         ),
         # Conversation Template
         conversation_template=partial(
@@ -972,7 +972,7 @@ MODEL_CONFIG_MAP = {
         model_max_context=262144,
         model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
         ),
         # Conversation Template
         conversation_template=partial(
