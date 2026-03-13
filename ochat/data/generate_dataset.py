@@ -135,7 +135,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
 
     image_processor = None
     video_processor = None
-    if "processor" in tokenizer.__class__.__name__.lower():
+    if model_config.has_processor:
         if hasattr(tokenizer, "tokenizer") and tokenizer.tokenizer is not None:
             conv_template = model_config.conversation_template(tokenizer=tokenizer.tokenizer)
         else:
