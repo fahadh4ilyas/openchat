@@ -244,7 +244,7 @@ class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
         if self.norm_topk_prob:
             router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
         router_top_value = router_top_value.to(router_logits.dtype)
-        router_scores = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        router_scores = router_top_value
         final_hidden_states = torch.zeros_like(nz_hidden_states)
         with torch.no_grad():
             expert_mask = torch.nn.functional.one_hot(router_indices, num_classes=self.num_experts + 1)
@@ -260,7 +260,7 @@ class UnpaddedQwen3MoeSparseMoeBlock(nn.Module):
             current_hidden_states, _ = self.experts[expert_idx](current_state)
             current_hidden_states = current_hidden_states * router_scores[token_idx, expert_idx, None]
             final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
-        return final_hidden_states, router_scores
+        return final_hidden_states, router_logits
 
 
 class UnpaddedQwen3MoeAttention(nn.Module):

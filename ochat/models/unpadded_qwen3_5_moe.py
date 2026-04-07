@@ -345,12 +345,11 @@ class UnpaddedQwen3_5MoeSparseMoeBlock(nn.Module):
         shared_expert_output = self.shared_expert(hidden_states)
         routing_logits, routing_weights, selected_experts = self.gate(hidden_states)
         expert_output = self.experts(hidden_states, selected_experts, routing_weights)
-        router_scores = torch.zeros_like(routing_logits).scatter_(1, selected_experts, routing_weights)
 
         shared_expert_output = torch.nn.functional.sigmoid(self.shared_expert_gate(hidden_states)) * shared_expert_output
 
         expert_output = expert_output + shared_expert_output
-        return expert_output, router_scores
+        return expert_output, routing_logits
 
 
 class UnpaddedQwen3_5MoeAttention(nn.Module):
