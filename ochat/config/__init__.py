@@ -504,6 +504,22 @@ MODEL_CONFIG_MAP = {
             inference_condition="GPT4 Correct",
         ),
     ),
+    "qwen3_5Moe": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
     "deepseekv2": ModelConfig(
         # Model
         model_max_context=163840,
@@ -980,6 +996,23 @@ MODEL_CONFIG_MAP = {
         conversation_template=partial(
             ChatMLConversationTemplate,
             model="qwen3_5",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_5Moe_chatml": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3_5_moe",
             role_prefix=_chatml_role_prefix,
             prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
             inference_condition="GPT4 correct",

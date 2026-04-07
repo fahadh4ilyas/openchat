@@ -32,3 +32,4 @@ from ochat.models.unpadded_qwen3_ring import Qwen3ForCausalLM as Qwen3RingForCau
 from ochat.models.unpadded_qwen3_moe import Qwen3MoeForCausalLM
 from ochat.models.unpadded_qwen3_moe_ring import Qwen3MoeForCausalLM as Qwen3MoeRingForCausalLM
 from ochat.models.unpadded_qwen3_5 import Qwen3_5ForConditionalGeneration
+from ochat.models.unpadded_qwen3_5_moe import Qwen3_5MoeForConditionalGeneration
