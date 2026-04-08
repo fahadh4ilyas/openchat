@@ -530,6 +530,7 @@ class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
 
 
 class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
         self.model = UnpaddedQwen3MoeModel(config)

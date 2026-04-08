@@ -415,6 +415,7 @@ class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
 
 
 class Qwen2ForCausalLM(UnpaddedQwen2PreTrainedModel):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     def __init__(self, config):
         super().__init__(config)
         self.model = UnpaddedQwen2Model(config)
