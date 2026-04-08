@@ -817,6 +817,9 @@ class UnpaddedQwen3_5MoeModel(UnpaddedQwen3_5MoePreTrainedModel):
         if pixel_values_videos is not None:
             mm_token_type_ids[nz_input_ids == video_token_id] = 2
 
+        if pixel_values is not None or pixel_values_videos is not None:
+            nz_hidden_states = nz_hidden_states.clone()
+
         # --------------------------------------------------
         # 3. IMAGE FEATURES
         # --------------------------------------------------
