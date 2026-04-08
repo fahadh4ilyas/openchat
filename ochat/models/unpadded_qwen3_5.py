@@ -283,6 +283,9 @@ class UnpaddedQwen3_5Attention(nn.Module):
 
 
         # flash attn
+        query_states = query_states.to(torch.bfloat16)
+        key_states = key_states.to(torch.bfloat16)
+        value_states = value_states.to(torch.bfloat16)
         if cu_seqlens[-1] == max_seqlen:
             attn_output = flash_attn_func(
                 q=query_states.unsqueeze(0),
