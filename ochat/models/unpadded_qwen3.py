@@ -359,10 +359,11 @@ class UnpaddedQwen3Model(UnpaddedQwen3PreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         self.rotary_emb = UnpaddedQwen3RotaryEmbedding(
             getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
             max_position_embeddings=2048,
-            base=config.rope_theta,
+            base=rope_theta,
         )
 
         self.layers = nn.ModuleList(
