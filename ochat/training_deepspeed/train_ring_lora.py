@@ -256,7 +256,7 @@ def create_model(args: TrainingArguments):
         # Model to assigned cuda device
         model = model.to(args.local_rank)
     # Enable gradient checkpointing
-    model.gradient_checkpointing_enable()
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
     model.enable_input_require_grads()
 
     # Optimizer
