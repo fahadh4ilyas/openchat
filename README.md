@@ -104,7 +104,7 @@ conda create -y --name openchat
 conda activate openchat
 
 conda install -y python=3.11
-pip3 install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130
+pip3 install torch==2.11.0 torchvision --index-url https://download.pytorch.org/whl/cu130
 
 pip3 install git+http://git.blackeye.id/fahadh/openchat.git
 ```
