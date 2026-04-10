@@ -54,6 +54,49 @@ assert tokens == [1, 7596, 1247, 28747, 26256, 2936, 7653, 1413, 334, 1680, 3200
 
 ## <a id="installation"></a> Installation
 
+First, make sure your nvidia driver version is at least 580. Check it by
+
+```bash
+cat /proc/driver/nvidia/version
+```
+
+If the version less than 580, you could reinstalled it by
+
+```bash
+sudo apt purge "^nvidia*"
+sudo apt purge "^libnvidia*"
+sudo apt autoremove
+sudo apt install nvidia-driver-580
+# reboot after this
+```
+
+Second, make sure cuda that you use in your environment is CUDA 13.0. You could install cuda by
+
+```bash
+sudo apt install cuda-toolkit-13-0
+```
+
+If CUDA 13.0 not exist in your package manager, add it first
+
+```bash
+wget https://developer.download.nvidia.com/compute/cuda/repos/<distro>/<arch>/cuda-keyring_1.1-1_all.deb # example distro=ubuntu2204, arch=x86_64
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+```
+
+Then, after make sure CUDA 13.0 already installed in `/usr/local/cuda-13.0`, add it to your path and ld library path in `~/.bashrc` or `~/.profile`
+
+```bash
+export PATH=/usr/local/cuda-13.0/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+```
+
+Then, log out your terminal session and re-log in. Check CUDA version by
+
+```bash
+nvcc --version
+```
+
 To use OpenChat, you need to install PyTorch. If you encounter compatibility problems, you can try to create a new `conda` environment following the instructions below.
 
 ```bash
@@ -61,7 +104,7 @@ conda create -y --name openchat
 conda activate openchat
 
 conda install -y python=3.11
-pip3 install torch
+pip3 install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 
 pip3 install git+http://git.blackeye.id/fahadh/openchat.git
 ```
@@ -94,7 +137,7 @@ OpenChat supports Llama 2 and Mistral models. Please first choose a base model t
 
 Note: The OpenChat conversation template requires an `<|end_of_turn|>` special token. The base model specified must include this token. Our provided weights are the original base weights with this token added. If you want to add them manually, use the `convert_llama_weights_to_hf_add_tokens.py` or `mistral_add_tokens.py` in the `scripts` directory.
 
-## Installing DeepSpeed and Flash Attention
+## Installing DeepSpeed, Flash Attention, Flash Linear Attention, and Causal Conv1d
 
 First, ensure that the CUDA `nvcc` compiler is available in your environment. If it is not, install the CUDA toolkit that matches the version used by PyTorch.
 
@@ -109,7 +152,7 @@ pip install deepspeed
 Then, install flash attention:
 
 ```bash
-pip install flash-attn --no-build-isolation
+pip install flash-attn==2.8.3 --no-build-isolation
 ```
 
 Additionally, install ring flash attention:
@@ -117,6 +160,19 @@ Additionally, install ring flash attention:
 ```bash
 pip install ring_flash_attn@git+https://github.com/zhuzilin/ring-flash-attention
 ```
+
+Next, install Flash Linear Attention:
+
+```bash
+pip install flash-linear-attention==0.5.0
+```
+
+Then, install causal conv 1d
+
+```bash
+pip install causal-conv1d==1.6.1
+```
+
 
 ### Preparing Your Data
 
@@ -134,6 +190,9 @@ class Conversation(BaseModel):
     items: List[Message]  # All messages within the conversation
     condition: str = ""  # C-RLFT condition, can be any string or empty.
     system: str = ""  # System message for this conversation
+
+    images: Optional[List[str]] = None # Path to images relative to dataset directory
+    videos: Optional[List[str]] = None # Path to videos relative to dataset directory
 ```
 
 For basic SFT, assign `weight` as `0` for human messages and `1` for assistant responses.
