@@ -144,7 +144,7 @@ First, ensure that the CUDA `nvcc` compiler is available in your environment. If
 Next, install DeepSpeed, Flash Attention, Flash Linear Attention, and Causal Conv1d by running the following commands:
 
 ```bash
-pip install deepspeed flash-attn==2.8.3 flash-linear-attention==0.5.0 causal-conv1d==1.6.1--no-build-isolation
+pip install deepspeed flash-attn==2.8.3 flash-linear-attention==0.5.0 causal-conv1d==1.6.1 --no-build-isolation
 ```
 
 > Better to set environment variable `DS_BUILD_CPU_ADAM=1` before installing deepspeed to build the optimizer.
