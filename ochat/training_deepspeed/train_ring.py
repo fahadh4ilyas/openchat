@@ -242,12 +242,13 @@ def create_model(args: TrainingArguments):
         args.deepspeed_config = ds_config
         optimizer = None
     else:
-        optimizer = deepspeed.ops.adam.FusedAdam(
+        optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=args.lr,
             weight_decay=args.weight_decay,
             betas=(args.beta1, args.beta2),
             eps=args.eps,
+            fused=True
         )
 
     # DeepSpeed model

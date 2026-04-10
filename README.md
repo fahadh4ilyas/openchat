@@ -141,36 +141,18 @@ Note: The OpenChat conversation template requires an `<|end_of_turn|>` special t
 
 First, ensure that the CUDA `nvcc` compiler is available in your environment. If it is not, install the CUDA toolkit that matches the version used by PyTorch.
 
-Next, install DeepSpeed:
+Next, install DeepSpeed, Flash Attention, Flash Linear Attention, and Causal Conv1d by running the following commands:
 
 ```bash
-pip install deepspeed
+pip install deepspeed flash-attn==2.8.3 flash-linear-attention==0.5.0 causal-conv1d==1.6.1--no-build-isolation
 ```
 
-> Better to set environment variable `DS_BUILD_CPU_ADAM=1` and `DS_BUILD_FUSED_ADAM=1` before installing deepspeed to build the optimizer.
-
-Then, install flash attention:
-
-```bash
-pip install flash-attn==2.8.3 --no-build-isolation
-```
+> Better to set environment variable `DS_BUILD_CPU_ADAM=1` before installing deepspeed to build the optimizer.
 
 Additionally, install ring flash attention:
 
 ```bash
 pip install ring_flash_attn@git+https://github.com/zhuzilin/ring-flash-attention
-```
-
-Next, install Flash Linear Attention:
-
-```bash
-pip install flash-linear-attention==0.5.0
-```
-
-Then, install causal conv 1d
-
-```bash
-pip install causal-conv1d==1.6.1
 ```
 
 
