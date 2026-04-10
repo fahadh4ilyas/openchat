@@ -230,6 +230,7 @@ def create_model(args: TrainingArguments):
             )
             .to(args.local_rank)
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         # Create lora config
@@ -253,6 +254,7 @@ def create_model(args: TrainingArguments):
             )
             .to(args.local_rank)
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         model = PeftModel.from_pretrained(model, model_path, is_trainable=True)

@@ -195,6 +195,7 @@ def create_model(args: TrainingArguments):
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
         model_path, low_cpu_mem_usage=True
     )
+    model.config.use_cache = False
     # Model to assigned cuda device
     model = model.to("cuda")
     # Enable gradient checkpointing

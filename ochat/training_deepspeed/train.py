@@ -229,6 +229,7 @@ def create_model(args: TrainingArguments):
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
         model_path, low_cpu_mem_usage=args.ds_zero_op != 3
     )
+    model.config.use_cache = False
     if not args.ds_offload:
         # Model to assigned cuda device
         model = model.to(args.local_rank)

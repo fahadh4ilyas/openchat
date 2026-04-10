@@ -200,6 +200,7 @@ def create_model(args: TrainingArguments):
         model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
             model_path, low_cpu_mem_usage=True, quantization_config=quantization_config
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         # Create lora config
@@ -219,6 +220,7 @@ def create_model(args: TrainingArguments):
             low_cpu_mem_usage=True,
             quantization_config=quantization_config,
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
