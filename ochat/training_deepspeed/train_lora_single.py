@@ -55,6 +55,7 @@ class TrainingArguments(BaseModel):
     beta1: float = Field(0.9)
     beta2: float = Field(0.95)
     eps: float = Field(1e-5)
+    chunk_size: int = Field(-1)
     use_fast_norm: bool = Field(False)
     use_fast_rope: bool = Field(False)
     torch_empty_cache_steps: Optional[int] = Field(None, gt=0)
@@ -118,6 +119,9 @@ def parse_args():
     parser_base.add_argument("--beta1", type=float, default=0.9)
     parser_base.add_argument("--beta2", type=float, default=0.95)
     parser_base.add_argument("--eps", type=float, default=1e-5)
+
+    # CHUNKING
+    parser_base.add_argument("--chunk_size", type=int, default=-1)
 
     # FAST FORWARD
     parser_base.add_argument("--use_fast_norm", action="store_true")
@@ -325,6 +329,7 @@ def train(args: TrainingArguments):
                 **batch_tensor,
                 **batch_info,
                 num_seq=num_seq,
+                chunk_size=args.chunk_size,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
@@ -396,6 +401,7 @@ def train(args: TrainingArguments):
                             **batch_tensor,
                             **batch_info,
                             num_seq=num_seq,
+                            chunk_size=args.chunk_size,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -475,6 +481,7 @@ def train(args: TrainingArguments):
                             **batch_tensor,
                             **batch_info,
                             num_seq=num_seq,
+                            chunk_size=args.chunk_size,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss

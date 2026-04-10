@@ -481,6 +481,7 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
         num_seq: int = 1,
+        chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
@@ -498,37 +499,47 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
             
-            chunk_size = 4096 # Cap VRAM spike
             total_loss = 0.0
             total_acc = 0.0
             
             # Iterate through the sequence in chunks
-            for i in range(0, hidden_states.size(0), chunk_size):
-                # 1. Slice chunks
-                hidden_chunk = hidden_states[i : i + chunk_size]
-                label_chunk = nz_shifted_label_ids[i : i + chunk_size]
-                weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
-                
-                # 2. Project ONLY this chunk using the tied embedding weights
-                logits_chunk = nn.functional.linear(hidden_chunk, self.model.embed_tokens.weight)
-                
-                # 3. Apply Gemma2 Softcapping to the chunk
+            if chunk_size > 0:
+                for i in range(0, hidden_states.size(0), chunk_size):
+                    # 1. Slice chunks
+                    hidden_chunk = hidden_states[i : i + chunk_size]
+                    label_chunk = nz_shifted_label_ids[i : i + chunk_size]
+                    weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
+                    
+                    # 2. Project ONLY this chunk using the tied embedding weights
+                    logits_chunk = nn.functional.linear(hidden_chunk, self.model.embed_tokens.weight)
+                    
+                    # 3. Apply Gemma2 Softcapping to the chunk
+                    if self.config.final_logit_softcapping is not None:
+                        logits_chunk = logits_chunk / self.config.final_logit_softcapping
+                        logits_chunk = torch.tanh(logits_chunk)
+                        logits_chunk = logits_chunk * self.config.final_logit_softcapping
+                    
+                    # 4. Compute metrics
+                    chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
+                    chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
+                    
+                    # 5. Accumulate
+                    total_loss += chunk_loss
+                    total_acc += chunk_acc
+                    
+                    # 6. Free VRAM immediately
+                    del logits_chunk
+                    del hidden_chunk
+            else:
+                logits = nn.functional.linear(hidden_states, self.model.embed_tokens.weight)
+
                 if self.config.final_logit_softcapping is not None:
-                    logits_chunk = logits_chunk / self.config.final_logit_softcapping
-                    logits_chunk = torch.tanh(logits_chunk)
-                    logits_chunk = logits_chunk * self.config.final_logit_softcapping
-                
-                # 4. Compute metrics
-                chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
-                chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
-                
-                # 5. Accumulate
-                total_loss += chunk_loss
-                total_acc += chunk_acc
-                
-                # 6. Free VRAM immediately
-                del logits_chunk
-                del hidden_chunk
+                    logits = logits / self.config.final_logit_softcapping
+                    logits = torch.tanh(logits)
+                    logits = logits * self.config.final_logit_softcapping
+
+                total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
+                total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
             if num_seq > 0:

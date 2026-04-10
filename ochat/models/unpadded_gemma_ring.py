@@ -456,6 +456,7 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
+        chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
@@ -473,31 +474,35 @@ class GemmaForCausalLM(UnpaddedGemmaPreTrainedModel):
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
             
-            chunk_size = 4096
             total_loss = 0.0
             total_acc = 0.0
             
             # Iterate through the sequence in chunks
-            for i in range(0, hidden_states.size(0), chunk_size):
-                # 1. Grab chunks
-                hidden_chunk = hidden_states[i : i + chunk_size]
-                label_chunk = nz_shifted_label_ids[i : i + chunk_size]
-                weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
-                
-                # 2. Project ONLY this chunk to vocab size
-                logits_chunk = self.lm_head(hidden_chunk)
-                
-                # 3. Compute loss and accuracy for this chunk
-                chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
-                chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
-                
-                # 4. Accumulate
-                total_loss += chunk_loss
-                total_acc += chunk_acc
-                
-                # 5. Free the massive chunk from VRAM immediately
-                del logits_chunk
-                del hidden_chunk
+            if chunk_size > 0:
+                for i in range(0, hidden_states.size(0), chunk_size):
+                    # 1. Grab chunks
+                    hidden_chunk = hidden_states[i : i + chunk_size]
+                    label_chunk = nz_shifted_label_ids[i : i + chunk_size]
+                    weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
+                    
+                    # 2. Project ONLY this chunk to vocab size
+                    logits_chunk = self.lm_head(hidden_chunk)
+                    
+                    # 3. Compute loss and accuracy for this chunk
+                    chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
+                    chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
+                    
+                    # 4. Accumulate
+                    total_loss += chunk_loss
+                    total_acc += chunk_acc
+                    
+                    # 5. Free the massive chunk from VRAM immediately
+                    del logits_chunk
+                    del hidden_chunk
+            else:
+                logits = self.lm_head(hidden_states)
+                total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
+                total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
             loss = (total_loss / total_seqs, total_acc / total_seqs)
