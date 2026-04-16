@@ -1,5 +1,5 @@
 from typing import Optional, Callable, Iterable, List, Dict
-from transformers.tokenization_utils import PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase
 
 from pydantic import BaseModel
 
@@ -20,6 +20,9 @@ class ChatMLMessage(BaseModel):
 class Conversation(BaseModel):
     items: List[Message]
 
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
+
     condition: str = ""
     system: str = ""
 
@@ -28,9 +31,15 @@ class PretokenizedConversation(BaseModel):
     input_ids: List[int]
     loss_weights: List[float]
 
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
+
 class PretrainingText(BaseModel):
     text: str
     weight: float = 1.0
+
+    images: Optional[List[str]] = None
+    videos: Optional[List[str]] = None
 
 
 class ConversationTemplate(BaseModel):

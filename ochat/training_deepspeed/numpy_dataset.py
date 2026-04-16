@@ -93,6 +93,8 @@ class NumpyDataset:
         else:
             raise FileNotFoundError('Can not open the file!')
 
+        self.max_seqlen = max(self.dataset["total_length"])
+
     def __len__(self) -> int:
         return self.length
 

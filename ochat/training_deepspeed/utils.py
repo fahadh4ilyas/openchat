@@ -11,6 +11,8 @@ from typing import Dict, Union, Optional
 from pathlib import Path
 from functools import partial
 
+from transformers import ProcessorMixin
+
 from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_deepspeed.numpy_dataset import NumpyDataset
 
@@ -43,34 +45,47 @@ def create_dataset(args, split_name: str) -> NumpyDataset:
     return NumpyDataset(filename)
 
 
-def batch_to_tensor(batch: Dict[str, np.ndarray]):
+def batch_to_tensor(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = None, processor: Optional[ProcessorMixin] = None):
     # Concat batches
+    images_list = sum([b.tolist() for b in batch['images']], start=[])
+    videos_list = sum([b.tolist() for b in batch['videos']], start=[])
     batch = {k: np.concatenate(batch[k], axis=0) for k in BATCH_KEYS.keys()}
 
-    # Pad an unused item to reach multiple of 64, for faster GEMM
-    total_seqlen = batch["nz_input_ids"].size
-    pad_len = _find_multiple(total_seqlen, 64) - total_seqlen
+    # # Pad an unused item to reach multiple of 64, for faster GEMM
+    # total_seqlen = batch["nz_input_ids"].size
+    # pad_len = _find_multiple(total_seqlen, 64) - total_seqlen
 
-    if pad_len > 0:
-        assert pad_len < 64
+    # if pad_len > 0:
+    #     assert pad_len < 64
 
-        # total length
-        padding_specs = {
-            "seqlens": (1, pad_len),
-            "nz_input_ids": (pad_len, PAD_ID),
-            "nz_position_ids": (pad_len, 0),
-            "nz_shifted_label_ids": (pad_len, PAD_ID),
-            "nz_shifted_loss_weights": (pad_len, 0),
-        }
-        for k, pad_spec in padding_specs.items():
-            batch[k] = np.concatenate(
-                (batch[k], np.full(*pad_spec, dtype=batch[k].dtype)), axis=0
-            )
+    #     # total length
+    #     padding_specs = {
+    #         "seqlens": (1, pad_len),
+    #         "nz_input_ids": (pad_len, PAD_ID),
+    #         "nz_position_ids": (pad_len, 0),
+    #         "nz_shifted_label_ids": (pad_len, PAD_ID),
+    #         "nz_shifted_loss_weights": (pad_len, 0),
+    #     }
+    #     for k, pad_spec in padding_specs.items():
+    #         batch[k] = np.concatenate(
+    #             (batch[k], np.full(*pad_spec, dtype=batch[k].dtype)), axis=0
+    #         )
 
     # to tensor
     batch_tensor: Dict[str, torch.Tensor] = {}
     for k, dtype in BATCH_KEYS.items():
         batch_tensor[k] = torch.from_numpy(batch[k]).to(dtype)
+    if processor is not None:
+        if images_list and hasattr(processor, "image_processor") and processor.image_processor is not None:
+            images_list = [os.path.join(dataset_path, img) for img in images_list]
+            output_images = processor.image_processor(images_list)
+            batch_tensor["pixel_values"] = output_images["pixel_values"]
+            batch_tensor["image_grid_thw"] = output_images["image_grid_thw"]
+        if videos_list and hasattr(processor, "video_processor") and processor.video_processor is not None:
+            videos_list = [os.path.join(dataset_path, vid) for vid in videos_list]
+            output_videos = processor.video_processor(videos_list)
+            batch_tensor["pixel_values_videos"] = output_videos["pixel_values_videos"]
+            batch_tensor["video_grid_thw"] = output_videos["video_grid_thw"]
 
     # cu seqlens
     batch_tensor["cu_seqlens"] = torch.nn.functional.pad(
@@ -143,6 +158,10 @@ def save_tokenizer(args, save_path):
     ).save_pretrained(save_path)
 
 
+def load_tokenizer(args):
+    return MODEL_CONFIG_MAP[args.model_type].model_tokenizer_create(args.model_path)
+
+
 def save_openchat_metadata(
     args, epoch: Union[int, float], latest_step: int, save_path
 ):
@@ -182,17 +201,23 @@ def calculate_auto_lr(
     return lr
 
 
-def mlflow_stopper_wrapper(function):
+def mlflow_stopper_wrapper(is_distributed: bool = True):
+    def _wrapper(function):
 
-    def mlflow_stopper(args):
+        def mlflow_stopper(args):
 
-        try:
-            function(args)
-        except:
-            raise
-        finally:
-            RANK = dist.get_rank()
-            if RANK == 0:
-                mlflow.end_run()
+            try:
+                function(args)
+            except:
+                raise
+            finally:
+                if not is_distributed:
+                    mlflow.end_run()
+                else:
+                    RANK = dist.get_rank()
+                    if RANK == 0:
+                        mlflow.end_run()
+        
+        return mlflow_stopper
     
-    return mlflow_stopper
+    return _wrapper

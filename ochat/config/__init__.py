@@ -44,7 +44,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),
         model_create_for_training=partial(
-            ochat.models.LlamaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -62,7 +62,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaSplitForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -80,7 +80,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaLongForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -98,7 +98,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -115,7 +115,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),
         model_create_for_training=partial(
-            ochat.models.LlamaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -136,7 +136,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -157,7 +157,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaLongForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -178,7 +178,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaLongRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -198,7 +198,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.MistralForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -216,7 +216,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralSplitForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -234,7 +234,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralLongForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -252,7 +252,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -269,7 +269,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.MixtralForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.MixtralForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -287,7 +287,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MixtralRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -304,7 +304,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.PhiForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.PhiForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -321,7 +321,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.OriPhiForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.OriPhiForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -338,7 +338,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.GemmaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -356,7 +356,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.GemmaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -373,7 +373,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -390,7 +390,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -408,7 +408,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen2RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -425,7 +425,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -443,7 +443,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -460,7 +460,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3MoeForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -478,8 +478,40 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3_5": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3_5Moe": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
         # Conversation Template
         conversation_template=partial(
             ConversationTemplate,
@@ -496,7 +528,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.DeepseekV2ForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -514,7 +546,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),
         model_create_for_training=partial(
-            ochat.models.LlamaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -533,7 +565,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaSplitForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -552,7 +584,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaLongForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -571,7 +603,7 @@ MODEL_CONFIG_MAP = {
         ),
         model_create_for_training=partial(
             ochat.models.LlamaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -589,7 +621,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.MistralForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -608,7 +640,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralSplitForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -627,7 +659,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralLongForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -646,7 +678,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MistralRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -664,7 +696,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.MixtralForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.MixtralForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -683,7 +715,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.MixtralRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -701,7 +733,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.PhiForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.PhiForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -719,7 +751,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.OriPhiForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.OriPhiForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -737,7 +769,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.GemmaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -756,7 +788,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.GemmaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -774,7 +806,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -792,7 +824,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.GemmaForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -811,7 +843,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.GemmaRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -829,7 +861,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Gemma2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -847,7 +879,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -866,7 +898,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen2RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -884,7 +916,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -903,7 +935,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -921,7 +953,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3MoeForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -940,12 +972,46 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
             ChatMLConversationTemplate,
             model="qwen3Moe",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_5_chatml": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3_5",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_5Moe_chatml": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3_5_moe",
             role_prefix=_chatml_role_prefix,
             prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
             inference_condition="GPT4 correct",
@@ -958,7 +1024,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen2ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -977,7 +1043,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen2RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -995,7 +1061,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3ForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -1014,7 +1080,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3RingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -1032,7 +1098,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.Qwen3MoeForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(
@@ -1051,7 +1117,7 @@ MODEL_CONFIG_MAP = {
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
             ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         ),
         # Conversation Template
         conversation_template=partial(
@@ -1069,7 +1135,7 @@ MODEL_CONFIG_MAP = {
             transformers.AutoTokenizer.from_pretrained, use_fast=False
         ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
         model_create_for_training=partial(
-            ochat.models.MistralForCausalLM.from_pretrained, torch_dtype=torch.bfloat16
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
         ),
         # Conversation Template
         conversation_template=partial(

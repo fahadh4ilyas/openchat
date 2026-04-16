@@ -74,7 +74,7 @@ def truncate_trailing_zero_weighted(tokens: list, weights: list):
     return tokens[: non_zero_index + 1], weights[: non_zero_index + 1]
 
 
-def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArguments):
+def add_single_conv(outputs: list, tokens: list, weights: list, images: list, videos: list, args: DataArguments):
     # truncate trailing zero weighted tokens
     tokens, weights = truncate_trailing_zero_weighted(tokens, weights)
     if not tokens:
@@ -118,6 +118,8 @@ def add_single_conv(outputs: list, tokens: list, weights: list, args: DataArgume
         "nz_position_ids": list(range(length)),
         "nz_shifted_label_ids": labels,
         "nz_shifted_loss_weights": weights,
+        "images": images,
+        "videos": videos,
     }
     results["num_seqs"] = sum(results["nz_shifted_loss_weights"])
 
@@ -130,25 +132,38 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     # Tokenization
     model_config = MODEL_CONFIG_MAP[args.model_type]
     tokenizer = model_config.model_tokenizer_create(args.model_path)
-    conv_template = model_config.conversation_template(tokenizer=tokenizer)
+
+    image_processor = None
+    video_processor = None
+    if model_config.model_has_processor:
+        if hasattr(tokenizer, "tokenizer") and tokenizer.tokenizer is not None:
+            conv_template = model_config.conversation_template(tokenizer=tokenizer.tokenizer)
+        else:
+            conv_template = model_config.conversation_template(tokenizer=tokenizer)
+        if hasattr(tokenizer, "image_processor") and tokenizer.image_processor is not None:
+            image_processor = tokenizer.image_processor
+        if hasattr(tokenizer, "video_processor") and tokenizer.video_processor is not None:
+            video_processor = tokenizer.video_processor
+    else:
+        conv_template = model_config.conversation_template(tokenizer=tokenizer)
 
     # Decode data
     job_print(job_id, "Decoding JSON ...")
     if args.pretokenized_in_files:
-        batch = [
+        curr_batch: List[PretokenizedConversation] = [
             PretokenizedConversation(**orjson.loads(json_line)) for json_line in batch
         ]
-        tokens_list = [b.input_ids for b in batch]
-        weights_list = [b.loss_weights for b in batch]
+        tokens_list = [b.input_ids for b in curr_batch]
+        weights_list = [b.loss_weights for b in curr_batch]
     elif args.pretraining_data:
-        batch = [
+        curr_batch: List[PretrainingText] = [
             PretrainingText(**orjson.loads(json_line)) for json_line in batch
         ]
-        all_text = [b.text for b in batch]
+        all_text = [b.text for b in curr_batch]
         text_mapping = dict(zip(all_text, conv_template._safe_tokenize(all_text)))
         tokens_list = []
         weights_list = []
-        for b in batch:
+        for b in curr_batch:
             tokens = []
 
             tokens.extend(conv_template.bos_tokens_)
@@ -164,28 +179,37 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
             tokens_list.append(tokens)
             weights_list.append(weights)
     else:
-        batch = [Conversation(**orjson.loads(json_line)) for json_line in batch]
+        curr_batch: List[Conversation] = [Conversation(**orjson.loads(json_line)) for json_line in batch]
 
         # Tokenize
         job_print(job_id, "Tokenizing ...")
         tokens_list = []
         weights_list = []
-        if len(batch) > 0:
+        if len(curr_batch) > 0:
             tokens_list, weights_list = conv_template.tokenize_conversations(
-                batch,
+                curr_batch,
                 inference=False,
                 seq_level_weight=args.per_sequence_loss,
                 force_eos_token=args.force_eos_token,
                 eos_final=args.eos_final,
                 separate_think=args.separate_think,
             )
+    
+    has_image = any([bool(b.images) for b in curr_batch])
+    has_video = any([bool(b.videos) for b in curr_batch])
+    images_list = [b.images if b.images else [] for b in curr_batch]
+    videos_list = [b.videos if b.videos else [] for b in curr_batch]
+    if has_image and image_processor is None:
+        job_print(job_id, "Warning: The tokenizer does not have an image processor but the data contains images. The images will be ignored.")
+    if has_video and video_processor is None:
+            job_print(job_id, "Warning: The tokenizer does not have a video processor but the data contains videos. The videos will be ignored.")
 
     # Generate data
     job_print(job_id, "Generating ...")
     max_context = args.max_seq_length or model_config.model_max_context
 
     outputs = []
-    for tokens, weights in zip(tokens_list, weights_list):
+    for tokens, weights, images, videos in zip(tokens_list, weights_list, images_list, videos_list):
         assert len(tokens) == len(weights)
 
         # Truncate to specified tokens
@@ -193,7 +217,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         weights = weights[:max_context]
 
         # Add to results
-        add_single_conv(outputs, tokens, weights, args)
+        add_single_conv(outputs, tokens, weights, images, videos, args)
 
     job_print(job_id, "Chunk finish")
 
@@ -201,6 +225,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
+    from ochat.config import MODEL_CONFIG_MAP
     # schema
     metadata = {"model_type": args.model_type}
     schema = [
@@ -211,6 +236,8 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
         pyarrow.field(f"nz_position_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_shifted_label_ids", pyarrow.list_(pyarrow.int32())),
         pyarrow.field(f"nz_shifted_loss_weights", pyarrow.list_(pyarrow.float32())),
+        pyarrow.field(f"images", pyarrow.list_(pyarrow.string())),
+        pyarrow.field(f"videos", pyarrow.list_(pyarrow.string()))
     ]
 
     schema = pyarrow.schema(schema, metadata={"metadata_json": orjson.dumps(metadata)})

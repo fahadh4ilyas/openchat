@@ -332,6 +332,9 @@ class UnpaddedQwen3MoeAttention(nn.Module):
         )
 
         # flash attn
+        query_states = query_states.to(torch.bfloat16)
+        key_states = key_states.to(torch.bfloat16)
+        value_states = value_states.to(torch.bfloat16)
         if cu_seqlens[-1] == max_seqlen:
             attn_output = zigzag_ring_flash_attn_func(
                 q=query_states.unsqueeze(0),
@@ -447,10 +450,11 @@ class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         self.rotary_emb = UnpaddedQwen3MoeRotaryEmbedding(
             getattr(config, "head_dim", config.hidden_size // config.num_attention_heads),
             max_position_embeddings=2048,
-            base=config.rope_theta,
+            base=rope_theta,
         )
 
         self.layers = nn.ModuleList(
@@ -518,6 +522,7 @@ class UnpaddedQwen3MoeModel(UnpaddedQwen3MoePreTrainedModel):
 
 
 class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     def __init__(self, config: Qwen3MoeConfig):
         super().__init__(config)
         self.model = UnpaddedQwen3MoeModel(config)
@@ -559,6 +564,7 @@ class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
+        chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
     ) -> CausalLMOutputWithPast:
@@ -571,7 +577,6 @@ class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
             use_fast_norm=use_fast_norm,
             use_fast_rope=use_fast_rope,
         )
-        logits = self.lm_head(hidden_states)
 
         loss = None
         if nz_shifted_label_ids is not None:
@@ -587,22 +592,43 @@ class Qwen3MoeForCausalLM(UnpaddedQwen3MoePreTrainedModel):
                 router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
             )
 
-            acc = (
-                weighted_token_accuracy(
-                    logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights
-                )
-                / total_seqs
-            )
+            total_ce_loss = 0.0
+            total_acc = 0.0
+            
+            if chunk_size > 0:
+                for i in range(0, hidden_states.size(0), chunk_size):
+                    # Slice chunks
+                    hidden_chunk = hidden_states[i : i + chunk_size]
+                    label_chunk = nz_shifted_label_ids[i : i + chunk_size]
+                    weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
+                    
+                    # Project only this chunk
+                    logits_chunk = self.lm_head(hidden_chunk)
+                    
+                    # Compute metrics
+                    chunk_ce_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
+                    chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
+                    
+                    # Accumulate
+                    total_ce_loss += chunk_ce_loss
+                    total_acc += chunk_acc
+                    
+                    # Free VRAM
+                    del logits_chunk
+                    del hidden_chunk
+            else:
+                logits = self.lm_head(hidden_states)
+                total_ce_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
+                total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+
+            final_ce_loss = total_ce_loss / total_seqs
+            final_acc = total_acc / total_seqs
             loss = (
-                weighted_cross_entropy(
-                    logits, nz_shifted_label_ids, nz_shifted_loss_weights
-                )
-                / total_seqs
-                + aux_loss,
-                aux_loss,
+                (final_ce_loss + aux_loss, aux_loss),
+                final_acc,
             )
 
         return CausalLMOutputWithPast(
-            loss=(loss, acc),  # type: ignore
-            logits=logits,
+            loss=loss,  # type: ignore
+            logits=None, # NEVER return the full logits tensor during 64k training!
         )

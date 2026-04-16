@@ -1,6 +1,7 @@
 import argparse
 import os
 import json
+from functools import partial
 from typing import Optional, Union, Literal, List
 
 from pydantic import BaseModel, Field, field_validator as validator
@@ -24,6 +25,7 @@ from ochat.training_deepspeed.utils import (
     save_openchat_metadata,
     clean_checkpoint,
     save_tokenizer,
+    load_tokenizer,
 )
 from ochat.training_deepspeed.multipack_dataloader_ring import (
     MultipackDistributedDataloader,
@@ -43,6 +45,7 @@ class TrainingArguments(BaseModel):
     local_rank: int = Field(...)
     model_path: str = Field(...)
     model_type: Optional[str] = Field(None)
+    has_processor: Optional[bool] = Field(None)
     data_prefix: str = Field(...)
     save_path: str = Field(...)
     save_every: Optional[int] = Field(None, gt=0)
@@ -64,6 +67,7 @@ class TrainingArguments(BaseModel):
     beta1: float = Field(0.9)
     beta2: float = Field(0.95)
     eps: float = Field(1e-5)
+    chunk_size: int = Field(-1)
     use_fast_norm: bool = Field(False)
     use_fast_rope: bool = Field(False)
     torch_empty_cache_steps: Optional[int] = Field(None, gt=0)
@@ -138,6 +142,9 @@ def parse_args() -> argparse.Namespace:
     parser_base.add_argument("--beta2", type=float, default=0.95)
     parser_base.add_argument("--eps", type=float, default=1e-5)
 
+    # CHUNKING
+    parser_base.add_argument("--chunk_size", type=int, default=-1)
+
     # FAST FORWARD
     parser_base.add_argument("--use_fast_norm", action="store_true")
     parser_base.add_argument("--use_fast_rope", action="store_true")
@@ -182,12 +189,16 @@ def parse_args() -> argparse.Namespace:
 
 
 def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
+    collate_fn = batch_to_tensor
+    if args.has_processor:
+        tokenizer = load_tokenizer(args)
+        collate_fn = partial(batch_to_tensor, dataset_path=os.path.dirname(args.data_prefix), processor=tokenizer)
     # Multipack dataloader
     return MultipackDistributedDataloader(
         dataset=data,
         lengths=data["total_length"],
         batch_max_length=args.batch_max_len,
-        collate_fn=batch_to_tensor,
+        collate_fn=collate_fn,
         seed=0,
     )
 
@@ -219,6 +230,7 @@ def create_model(args: TrainingArguments):
             )
             .to(args.local_rank)
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         # Create lora config
@@ -242,6 +254,7 @@ def create_model(args: TrainingArguments):
             )
             .to(args.local_rank)
         )
+        model.config.use_cache = False
         if args.use_qlora:
             model = prepare_model_for_kbit_training(model)
         model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
@@ -249,7 +262,7 @@ def create_model(args: TrainingArguments):
         # Model to assigned cuda device
         model = model.to(args.local_rank)
     # Enable gradient checkpointing
-    model.gradient_checkpointing_enable()
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
     model.enable_input_require_grads()
 
     # Optimizer
@@ -277,12 +290,13 @@ def create_model(args: TrainingArguments):
         args.deepspeed_config = ds_config
         optimizer = None
     else:
-        optimizer = deepspeed.ops.adam.FusedAdam(
+        optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=args.lr,
             weight_decay=args.weight_decay,
             betas=(args.beta1, args.beta2),
             eps=args.eps,
+            fused=True
         )
 
     # DeepSpeed model
@@ -296,7 +310,7 @@ def create_model(args: TrainingArguments):
     return model_engine, optimizer
 
 
-@mlflow_stopper_wrapper
+@mlflow_stopper_wrapper()
 def train(args: TrainingArguments):
     deepspeed.init_distributed(dist_backend="nccl")
     dsconfig = HfDeepSpeedConfig(args.deepspeed_config)
@@ -311,6 +325,7 @@ def train(args: TrainingArguments):
 
     # Load model type
     args.model_type = train_dataset.metadata["model_type"]
+    args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
 
     # Data Loader
     train_loader = create_distributed_dataloader(args, train_dataset)
@@ -386,6 +401,7 @@ def train(args: TrainingArguments):
                 **batch_tensor,
                 **batch_info,
                 total_seqs=total_seqs,
+                chunk_size=args.chunk_size,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
@@ -473,6 +489,7 @@ def train(args: TrainingArguments):
                             **batch_tensor,
                             **batch_info,
                             total_seqs=total_seqs,
+                            chunk_size=args.chunk_size,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -567,6 +584,7 @@ def train(args: TrainingArguments):
                             **batch_tensor,
                             **batch_info,
                             total_seqs=total_seqs,
+                            chunk_size=args.chunk_size,
                             use_fast_norm=args.use_fast_norm,
                             use_fast_rope=args.use_fast_rope,
                         ).loss
@@ -630,6 +648,20 @@ def train(args: TrainingArguments):
                     save_openchat_metadata(args, epoch + 1, step, save_path)
 
     if RANK == 0:
+        progress_bar.close()
+
+        save_path = args.save_path
+
+        model_engine.module.save_pretrained(
+            save_path, state_dict=state_dict
+        )  # type: ignore
+
+        # Also save tokenizer from base model
+        save_tokenizer(args, save_path)
+
+        # Write metadata
+        save_openchat_metadata(args, epoch + 1, step, save_path)
+
         mlflow.end_run()
 
 
