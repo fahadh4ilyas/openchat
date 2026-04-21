@@ -1,8 +1,8 @@
-import json, re
+import json, json_repair, re
 from typing import Optional, Callable, Iterable, List, Dict, Union
 from transformers import PreTrainedTokenizerBase
 
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator, ValidationInfo
 
 
 class TextContentPart(BaseModel):
@@ -51,12 +51,18 @@ class FunctionCall(BaseModel):
 
     @field_validator("arguments")
     @classmethod
-    def validate_arguments(cls, v):
+    def validate_arguments(cls, v, info: ValidationInfo):
         if isinstance(v, str):
+            use_repair = info.context.get("use_json_repair", False)
             try:
-                v = json.loads(v)
+                if use_repair:
+                    v = json_repair.loads(v)
+                else:
+                    v = json.loads(v)
             except json.JSONDecodeError:
                 raise ValueError("Arguments string is not a valid JSON")
+            except Exception:
+                raise ValueError("Error parsing arguments string as JSON")
         elif not isinstance(v, dict):
             raise ValueError("Arguments must be a dict or a JSON string")
         return v
@@ -77,7 +83,7 @@ class ToolCall(BaseModel):
 class MessageOpenAI(BaseModel):
     role: str
     reasoning_content: Optional[str] = None
-    content: Union[str, List[TextContentPart | ImageContentPart | VideoContentPart]]
+    content: Union[None, str, List[TextContentPart | ImageContentPart | VideoContentPart]] = None
     name: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = None
 
@@ -97,6 +103,8 @@ class MessageOpenAI(BaseModel):
                 if match_reasoning:
                     self.reasoning_content = match_reasoning.group(1).strip()
                     self.content[0].text = self.content[0].text.replace(match_reasoning.group(0), "").strip()
+        elif self.content is None:
+            self.content = []
         return self
 
 

@@ -6,6 +6,7 @@ import transformers
 from ochat.config.model_config import ModelConfig
 from ochat.config.conversation_template import (
     Conversation,
+    ConversationOpenAI,
     PretokenizedConversation,
     PretrainingText,
     ConversationTemplate,
