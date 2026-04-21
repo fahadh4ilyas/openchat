@@ -68,12 +68,6 @@ def handle_media(url: str, output_dir: str, media_type: str) -> str:
             
     return relative_path
 
-def to_hf_message(msg: MessageOpenAI) -> Dict:
-    """Converts MessageOpenAI into a dict compatible with HF chat templates using model_dump."""
-    # Exclude None values to avoid cluttering the template with empty fields,
-    # and exclude 'weight' and 'name' as they aren't part of standard HF messages.
-    return msg.model_dump(exclude_none=True, exclude={"weight", "name"})
-
 def to_hf_tools(tools: Optional[List[Tool]]) -> Optional[List[Dict]]:
     """Convert Pydantic tools to HuggingFace dictionary format."""
     if not tools:
@@ -131,7 +125,7 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
 
             msg_images.append(curr_imgs)
             msg_videos.append(curr_vids)
-            hf_messages.append(to_hf_message(msg))
+            hf_messages.append(msg.model_dump(exclude_none=True, exclude={"weight", "name"}))
 
         # 2. Find indices where weight > 0
         target_indices = [i for i, w in enumerate(original_weights) if w > 0]
@@ -146,7 +140,7 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
             prefixes.append(prefix)
             
             # Apply chat template with tools included
-            kwargs = {"tokenize": False}
+            kwargs = {"tokenize": False, "add_generation_prompt": False}
             if hf_tools:
                 kwargs["tools"] = hf_tools
                 
@@ -178,7 +172,7 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
             active_imgs = [img for sublist in msg_images[:target_index + 1] for img in sublist]
             active_vids = [vid for sublist in msg_videos[:target_index + 1] for vid in sublist]
             
-            kwargs = {"tokenize": True, "return_dict": True}
+            kwargs = {"tokenize": True, "return_dict": True, "add_generation_prompt": False}
             if hf_tools:
                 kwargs["tools"] = hf_tools
 
