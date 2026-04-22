@@ -150,14 +150,17 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
         # 4 & 5. Substring logic
         num_targets = len(target_indices)
         keep_prefix = [True] * num_targets
-        prefix_weights = [original_weights[:t_idx + 1].copy() for t_idx in target_indices]
+        prefix_weights = [[] for _ in range(num_targets)]
 
         for i in range(num_targets):
-            for j in range(i + 1, num_targets):
-                if strings[i] not in strings[j]:
-                    prefix_weights[j][target_indices[i]] = 0.0
-                else:
-                    keep_prefix[i] = False
+            if i == num_targets - 1:
+                prefix_weights[i] = original_weights[:target_indices[i] + 1].copy()
+                break
+            if strings[i] in strings[i+1]:
+                keep_prefix[i] = False
+                continue
+            prefix_weights[i] = original_weights[:target_indices[i] + 1].copy()
+            original_weights[:target_indices[i] + 1] = [0.0] * (target_indices[i] + 1)
 
         # 6. Elongate tokens, decode, and extract
         for i in range(num_targets):
