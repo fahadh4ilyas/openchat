@@ -1,7 +1,133 @@
-from typing import Optional, Callable, Iterable, List, Dict
+import json, json_repair, re
+from typing import Optional, Callable, Iterable, List, Dict, Union
 from transformers import PreTrainedTokenizerBase
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator, ValidationInfo
+
+
+class TextContentPart(BaseModel):
+    type: str = "text"
+    text: str
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        if v != "text":
+            raise ValueError("Invalid type for TextContentPart")
+        return v
+
+
+class Url(BaseModel):
+    url: str
+
+
+class ImageContentPart(BaseModel):
+    type: str
+    image_url: Url
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        if v not in ["image", "image_url"]:
+            raise ValueError("Invalid type for ImageContentPart")
+        return v
+
+
+class VideoContentPart(BaseModel):
+    type: str
+    video: str
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        if v != "video":
+            raise ValueError("Invalid type for VideoContentPart")
+        return v
+
+
+class FunctionCall(BaseModel):
+    name: str
+    arguments: Union[Dict, str]
+
+    @field_validator("arguments")
+    @classmethod
+    def validate_arguments(cls, v, info: ValidationInfo):
+        if isinstance(v, str):
+            use_repair = info.context.get("use_json_repair", False)
+            try:
+                if use_repair:
+                    v = json_repair.loads(v)
+                else:
+                    v = json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError("Arguments string is not a valid JSON")
+            except Exception:
+                raise ValueError("Error parsing arguments string as JSON")
+        elif not isinstance(v, dict):
+            raise ValueError("Arguments must be a dict or a JSON string")
+        return v
+
+
+class ToolCall(BaseModel):
+    type: str
+    function: FunctionCall
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        if v != "function":
+            raise ValueError("Invalid type for ToolCall")
+        return v
+
+
+class MessageOpenAI(BaseModel):
+    role: str
+    reasoning_content: Optional[str] = None
+    content: Union[None, str, List[TextContentPart | ImageContentPart | VideoContentPart]] = None
+    name: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+
+    weight: Optional[float] = None
+
+    @model_validator(mode="after")
+    def validate_message(self):
+        if isinstance(self.content, str):
+            if self.role == "assistant":
+                match_reasoning = re.search(r"<think>(.*?)</think>", self.content, re.DOTALL)
+                if match_reasoning:
+                    self.reasoning_content = match_reasoning.group(1).strip()
+                    self.content = self.content.replace(match_reasoning.group(0), "").strip()
+            self.content = [TextContentPart(text=self.content)]
+        elif isinstance(self.content, list) and self.role == "assistant" and isinstance(self.content[0], TextContentPart):
+                match_reasoning = re.search(r"<tool_call>(.*?)</tool_call>", self.content[0].text, re.DOTALL)
+                if match_reasoning:
+                    self.reasoning_content = match_reasoning.group(1).strip()
+                    self.content[0].text = self.content[0].text.replace(match_reasoning.group(0), "").strip()
+        elif self.content is None:
+            self.content = []
+        return self
+
+
+class Function(BaseModel):
+    name: str
+    parameters: Optional[Dict] = None
+
+
+class Tool(BaseModel):
+    type: str
+    function: Function
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v):
+        if v != "function":
+            raise ValueError("Invalid type for Tool")
+        return v
+
+
+class ConversationOpenAI(BaseModel):
+    messages: List[MessageOpenAI]
+    tools: Optional[List[Tool]] = None
 
 
 class Message(BaseModel):
@@ -33,6 +159,7 @@ class PretokenizedConversation(BaseModel):
 
     images: Optional[List[str]] = None
     videos: Optional[List[str]] = None
+
 
 class PretrainingText(BaseModel):
     text: str

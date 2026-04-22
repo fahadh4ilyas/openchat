@@ -25,7 +25,8 @@ dependencies = [
     "bitsandbytes==0.49.2",
     "accelerate==1.13.0", 
     "protobuf",
-    "pydantic"
+    "pydantic",
+    "json-repair"
 ]
 
 [project.urls]
