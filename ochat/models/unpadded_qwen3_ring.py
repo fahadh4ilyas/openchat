@@ -183,6 +183,7 @@ class UnpaddedQwen3Attention(nn.Module):
         self.max_window_layers = config.max_window_layers
         self.num_attention_heads = config.num_attention_heads
         self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
+        self.scaling = self.head_dim**-0.5
         self.sliding_window = config.sliding_window
         self.attention_dropout = config.attention_dropout
         self.use_sliding_window = config.use_sliding_window
@@ -236,6 +237,10 @@ class UnpaddedQwen3Attention(nn.Module):
             query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
         )
 
+        use_sliding_window = (
+            self.use_sliding_window and self.layer_idx < self.max_window_layers
+        )
+
         # flash attn
         query_states = query_states.to(torch.bfloat16)
         key_states = key_states.to(torch.bfloat16)
@@ -245,8 +250,12 @@ class UnpaddedQwen3Attention(nn.Module):
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if use_sliding_window
+                else (-1, -1),
             )
         else:
             attn_output = zigzag_ring_flash_attn_varlen_func(
@@ -255,8 +264,12 @@ class UnpaddedQwen3Attention(nn.Module):
                 v=value_states,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if use_sliding_window
+                else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]
