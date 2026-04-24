@@ -331,6 +331,10 @@ class UnpaddedQwen3MoeAttention(nn.Module):
             query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
         )
 
+        use_sliding_window = (
+            self.use_sliding_window and self.layer_idx < self.max_window_layers
+        )
+
         # flash attn
         query_states = query_states.to(torch.bfloat16)
         key_states = key_states.to(torch.bfloat16)
@@ -340,6 +344,7 @@ class UnpaddedQwen3MoeAttention(nn.Module):
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
             )
@@ -350,8 +355,12 @@ class UnpaddedQwen3MoeAttention(nn.Module):
                 v=value_states,
                 cu_seqlens=cu_seqlens,
                 max_seqlen=max_seqlen,
+                softmax_scale=self.scaling,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if use_sliding_window
+                else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]

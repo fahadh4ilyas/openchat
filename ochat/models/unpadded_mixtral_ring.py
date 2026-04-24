@@ -283,6 +283,9 @@ class UnpaddedMixtralAttention(nn.Module):
                 v=value_states.unsqueeze(0),
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
             )
         else:
             attn_output = zigzag_ring_flash_attn_varlen_func(
@@ -293,6 +296,9 @@ class UnpaddedMixtralAttention(nn.Module):
                 max_seqlen=max_seqlen,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]
