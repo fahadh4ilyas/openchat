@@ -335,10 +335,10 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
         if self.training and self.jitter_noise > 0:
             nz_hidden_states *= torch.empty_like(nz_hidden_states).uniform_(1.0 - self.jitter_noise, 1.0 + self.jitter_noise)
         router_logits = self.gate(nz_hidden_states)  # (seq_len, num_experts)
-        router_logits = torch.nn.functional.softmax(router_logits.float(), dim=-1)
-        router_top_value, router_indices = torch.topk(router_logits, self.top_k, dim=-1)  # (seq_len, top_k)
+        router_probs = torch.nn.functional.softmax(router_logits.float(), dim=-1)
+        router_top_value, router_indices = torch.topk(router_probs, self.top_k, dim=-1)  # (seq_len, top_k)
         router_top_value /= router_top_value.sum(dim=-1, keepdim=True)
-        top_k_weights = torch.zeros_like(router_logits).scatter_(1, router_indices, router_top_value)
+        top_k_weights = router_top_value
         final_hidden_states = torch.zeros_like(nz_hidden_states)
         with torch.no_grad():
             expert_mask = torch.nn.functional.one_hot(router_indices, num_classes=self.num_experts + 1)
@@ -354,7 +354,7 @@ class UnpaddedMixtralSparseMoeBlock(nn.Module):
             current_hidden_states = self.experts[expert_idx](current_state)
             current_hidden_states = current_hidden_states * top_k_weights[token_idx, expert_idx, None]
             final_hidden_states.index_add_(0, token_idx, current_hidden_states.to(final_hidden_states.dtype))
-        return final_hidden_states, top_k_weights
+        return final_hidden_states, router_logits
 
 
 class UnpaddedMixtralDecoderLayer(nn.Module):
