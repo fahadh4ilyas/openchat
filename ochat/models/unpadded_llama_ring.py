@@ -31,8 +31,11 @@ from transformers.utils import logging
 from transformers.models.llama.configuration_llama import LlamaConfig
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
+    from ring_flash_attn import (
+        zigzag_ring_flash_attn_func,
+        zigzag_ring_flash_attn_varlen_func,
+    )
 except ImportError:
     print("FlashAttention not found. Install it if you need to train models.")
 
@@ -241,7 +244,7 @@ class UnpaddedLlamaAttention(nn.Module):
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
-            attn_output = flash_attn_func(
+            attn_output = zigzag_ring_flash_attn_func(
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
@@ -249,14 +252,12 @@ class UnpaddedLlamaAttention(nn.Module):
                 causal=True,
             )
         else:
-            attn_output = flash_attn_varlen_func(
+            attn_output = zigzag_ring_flash_attn_varlen_func(
                 q=query_states,
                 k=key_states,
                 v=value_states,
-                cu_seqlens_q=cu_seqlens,
-                cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen,
-                max_seqlen_k=max_seqlen,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
             )
@@ -454,10 +455,10 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
-        num_seq: int = 0,
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
@@ -507,10 +508,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
-            if num_seq > 0:
-                loss = (total_loss / num_seq, total_acc / num_seq)
-            else:
-                loss = (total_loss, total_acc)
+            loss = (total_loss / total_seqs, total_acc / total_seqs)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

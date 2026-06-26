@@ -21,18 +21,21 @@
 
 from typing import Optional, Tuple
 
-import torch
+import torch, math
 from torch import nn
 
 from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from transformers.models.llama.configuration_llama import LlamaConfig
+from .configuration_llama_long import LlamaConfig
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
+    from ring_flash_attn import (
+        zigzag_ring_flash_attn_func,
+        zigzag_ring_flash_attn_varlen_func,
+    )
 except ImportError:
     print("FlashAttention not found. Install it if you need to train models.")
 
@@ -69,6 +72,45 @@ def rms_norm(
     variance = (hidden_states * hidden_states).mean(-1, keepdim=True)
     hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
     return weight * hidden_states.to(input_dtype)
+
+
+# Inverse dim formula to find dim based on number of rotations
+def _yarn_find_correction_dim(
+    num_rotations, dim, base=10000, max_position_embeddings=2048
+):
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (
+        2 * math.log(base)
+    )
+
+
+# Find dim range bounds based on rotations
+def _yarn_find_correction_range(
+    low_rot, high_rot, dim, base=10000, max_position_embeddings=2048
+):
+    low = math.floor(
+        _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
+    )
+    high = math.ceil(
+        _yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
+    )
+    return max(low, 0), min(high, dim - 1)  # Clamp values just in case
+
+
+def _yarn_linear_ramp_mask(min, max, dim, inv_freq):
+    if min == max:
+        max += 0.001  # Prevent singularity
+
+    linear_func = (torch.arange(dim, dtype=torch.int64).type_as(inv_freq) - min) / (
+        max - min
+    )
+    ramp_func = torch.clamp(linear_func, 0, 1)
+    return ramp_func
+
+
+def _yarn_get_mscale(scale=1):
+    if scale <= 1:
+        return 1.0
+    return 0.1 * math.log(scale) + 1.0
 
 
 def rotate_half(x: torch.Tensor):
@@ -116,8 +158,17 @@ class UnpaddedLlamaRMSNorm(nn.Module):
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
-    def __init__(self, dim, max_position_embeddings, base, device=None):
+class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
+    """LlamaRotaryEmbedding extended with linear scaling. Credits to the Reddit user /u/kaiokendev"""
+
+    def __init__(
+        self,
+        dim,
+        max_position_embeddings=2048,
+        base=10000,
+        device=None,
+        scaling_factor=1.0,
+    ):
         super().__init__()
 
         # RoPE
@@ -125,6 +176,158 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
             base
             ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
         )
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.device = device
+        self.scaling_factor = scaling_factor
+        self.calculate_cos_sin(max_position_embeddings)
+
+    def calculate_cos_sin(self, max_position_embeddings):
+        self.max_position_embeddings = max_position_embeddings
+
+        t = torch.arange(
+            max_position_embeddings, dtype=torch.int64, device=self.device
+        ).type_as(self.inv_freq)
+        t = t / self.scaling_factor
+        freqs = torch.outer(t, self.inv_freq)
+
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        dtype = torch.get_default_dtype()
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_position_embeddings:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
+        return self.cos_cached, self.sin_cached
+
+
+class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
+    def __init__(
+        self,
+        dim,
+        max_position_embeddings=2048,
+        base=10000,
+        scale=1,
+        original_max_position_embeddings=2048,
+        extrapolation_factor=1,
+        attn_factor=1,
+        beta_fast=32,
+        beta_slow=1,
+        finetuned=False,
+        device=None,
+    ):
+        super().__init__()
+
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        self.scale = scale
+        self.original_max_position_embeddings = original_max_position_embeddings
+        self.extrapolation_factor = extrapolation_factor
+        self.attn_factor = attn_factor
+        self.beta_fast = beta_fast
+        self.beta_slow = beta_slow
+
+        self.yarn(device)
+
+    def calculate_cos_sin(self, max_position_embeddings):
+        # Build here to make `torch.jit.trace` work.
+        self.max_seq_len_cached = max_position_embeddings
+        t = torch.arange(
+            self.max_seq_len_cached, dtype=torch.int64, device=self.inv_freq.device
+        ).type_as(self.inv_freq)
+        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)
+        dtype = torch.get_default_dtype()
+
+        self.register_buffer(
+            "cos_cached", (emb.cos() * self.mscale).to(dtype), persistent=False
+        )
+        self.register_buffer(
+            "sin_cached", (emb.sin() * self.mscale).to(dtype), persistent=False
+        )
+
+    def yarn(self, device):
+        pos_freqs = self.base ** (
+            torch.arange(0, self.dim, 2, dtype=torch.int64, device=device).float()
+            / self.dim
+        )
+        inv_freq_extrapolation = 1.0 / pos_freqs
+        inv_freq_interpolation = 1.0 / (self.scale * pos_freqs)
+
+        low, high = _yarn_find_correction_range(
+            self.beta_fast,
+            self.beta_slow,
+            self.dim,
+            self.base,
+            self.original_max_position_embeddings,
+        )
+        inv_freq_mask = (
+            (
+                1
+                - _yarn_linear_ramp_mask(
+                    low, high, self.dim // 2, inv_freq_interpolation
+                ).to(device)
+            )
+            * self.extrapolation_factor
+        )  # Get n-d rotational scaling corrected for extrapolation
+        inv_freq = (
+            inv_freq_interpolation * (1 - inv_freq_mask)
+            + inv_freq_extrapolation * inv_freq_mask
+        )
+
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.mscale = float(
+            _yarn_get_mscale(self.scale) * self.attn_factor
+        )  # Get n-d magnitude scaling corrected for interpolation
+
+    def forward(self, max_position_embeddings):
+        if max_position_embeddings > self.max_seq_len_cached:
+            max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
+            self.calculate_cos_sin(max_position_embeddings)
+        return self.cos_cached, self.sin_cached
+
+
+class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
+    """LlamaRotaryEmbedding with Llama3 Scaling"""
+
+    def __init__(
+        self,
+        dim,
+        max_position_embeddings=131072,
+        base=10000,
+        device=None,
+        factor=8.0,
+        low_freq_factor=1.0,
+        high_freq_factor=4.0,
+        original_max_position_embeddings=8192,
+    ):
+        super().__init__()
+
+        # RoPE
+        inv_freq = 1.0 / (
+            base
+            ** (torch.arange(0, dim, 2, dtype=torch.int64, device=device).float() / dim)
+        )
+        low_freq_wavelen = original_max_position_embeddings / low_freq_factor
+        high_freq_wavelen = original_max_position_embeddings / high_freq_factor
+        new_freqs = []
+        for freq in inv_freq:
+            wavelen = 2 * math.pi / freq
+            if wavelen < high_freq_wavelen:
+                new_freqs.append(freq)
+            elif wavelen > low_freq_wavelen:
+                new_freqs.append(freq / factor)
+            else:
+                assert low_freq_wavelen != high_freq_wavelen
+                smooth = (
+                    original_max_position_embeddings / wavelen - low_freq_factor
+                ) / (high_freq_factor - low_freq_factor)
+                new_freqs.append((1 - smooth) * freq / factor + smooth * freq)
+        inv_freq = torch.tensor(new_freqs, dtype=inv_freq.dtype, device=inv_freq.device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.device = device
         self.calculate_cos_sin(max_position_embeddings)
@@ -135,7 +338,6 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
         t = torch.arange(
             max_position_embeddings, dtype=torch.int64, device=self.device
         ).type_as(self.inv_freq)
-
         freqs = torch.outer(t, self.inv_freq)
 
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
@@ -241,7 +443,7 @@ class UnpaddedLlamaAttention(nn.Module):
 
         # flash attn
         if cu_seqlens[-1] == max_seqlen:
-            attn_output = flash_attn_func(
+            attn_output = zigzag_ring_flash_attn_func(
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
@@ -249,14 +451,12 @@ class UnpaddedLlamaAttention(nn.Module):
                 causal=True,
             )
         else:
-            attn_output = flash_attn_varlen_func(
+            attn_output = zigzag_ring_flash_attn_varlen_func(
                 q=query_states,
                 k=key_states,
                 v=value_states,
-                cu_seqlens_q=cu_seqlens,
-                cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen,
-                max_seqlen_k=max_seqlen,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
             )
@@ -351,11 +551,38 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        self.rotary_emb = UnpaddedLlamaRotaryEmbedding(
-            config.hidden_size // config.num_attention_heads,
-            max_position_embeddings=2048,
-            base=config.rope_theta,
-        )
+        rope_scaling_type = config.rope_scaling.get(
+            "type", None
+        ) or config.rope_scaling.get("rope_type", None)
+        if rope_scaling_type == "linear":
+            self.rotary_emb = UnpaddedLlamaLinearScalingRotaryEmbedding(
+                config.hidden_size // config.num_attention_heads,
+                max_position_embeddings=2048,
+                base=config.rope_theta,
+                scaling_factor=config.rope_scaling["factor"],
+            )
+        elif rope_scaling_type == "yarn":
+            self.rotary_emb = UnpaddedLlamaYarnRotaryEmbedding(
+                config.hidden_size // config.num_attention_heads,
+                max_position_embeddings=2048,
+                scale=config.rope_scaling["factor"],
+                original_max_position_embeddings=config.rope_scaling[
+                    "original_max_position_embeddings"
+                ],
+                base=config.rope_theta,
+            )
+        elif rope_scaling_type == "llama3":
+            self.rotary_emb = UnpaddedLlama3RotaryEmbedding(
+                config.hidden_size // config.num_attention_heads,
+                max_position_embeddings=2048,
+                factor=config.rope_scaling["factor"],
+                low_freq_factor=config.rope_scaling["low_freq_factor"],
+                high_freq_factor=config.rope_scaling["high_freq_factor"],
+                original_max_position_embeddings=config.rope_scaling[
+                    "original_max_position_embeddings"
+                ],
+                base=config.rope_theta,
+            )
 
         self.layers = nn.ModuleList(
             [UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
@@ -454,10 +681,10 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
-        num_seq: int = 0,
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
@@ -507,10 +734,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
-            if num_seq > 0:
-                loss = (total_loss / num_seq, total_acc / num_seq)
-            else:
-                loss = (total_loss, total_acc)
+            loss = (total_loss / total_seqs, total_acc / total_seqs)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

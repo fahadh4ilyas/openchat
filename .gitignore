@@ -1,6 +1,9 @@
 # VSCode
 .vscode/
 
+# Ruff
+.ruff_cache
+
 # WandB
 wandb/
 

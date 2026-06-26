@@ -17,7 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Unpadded & Fused LLaMA model. Compatible with HF. """
+""" PyTorch Unpadded & Fused Qwen2 model. Compatible with HF. """
 
 from typing import Optional, Tuple
 
@@ -28,11 +28,14 @@ from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.qwen2.configuration_qwen2 import Qwen2Config
 
 try:
-    from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
     from flash_attn.ops.triton.cross_entropy import cross_entropy_loss
+    from ring_flash_attn import (
+        zigzag_ring_flash_attn_func,
+        zigzag_ring_flash_attn_varlen_func,
+    )
 except ImportError:
     print("FlashAttention not found. Install it if you need to train models.")
 
@@ -100,10 +103,11 @@ def apply_rotary_pos_emb(
     return q_embed.to(base_dtype), k_embed.to(base_dtype)
 
 
-class UnpaddedLlamaRMSNorm(nn.Module):
+# Copied from transformers.models.llama.modeling_llama.LlamaRMSNorm with Llama->Qwen2
+class UnpaddedQwen2RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps):
         """
-        UnpaddedLlamaRMSNorm is equivalent to T5LayerNorm
+        UnpaddedQwen2RMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
 
@@ -116,7 +120,8 @@ class UnpaddedLlamaRMSNorm(nn.Module):
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
+# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Qwen2
+class UnpaddedQwen2RotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
@@ -151,40 +156,37 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-class UnpaddedLlamaMLP(nn.Module):
-    def __init__(self, config: LlamaConfig):
+class UnpaddedQwen2MLP(nn.Module):
+    def __init__(self, config: Qwen2Config):
         super().__init__()
-        self.gate_proj = nn.Linear(
-            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
-        )
-        self.down_proj = nn.Linear(
-            config.intermediate_size, config.hidden_size, bias=config.mlp_bias
-        )
-        self.up_proj = nn.Linear(
-            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
-        )
+
+        self.hidden_size = config.hidden_size
+        self.intermediate_size = config.intermediate_size
+
+        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
-class UnpaddedLlamaAttention(nn.Module):
+class UnpaddedQwen2Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: Qwen2Config, layer_idx: Optional[int] = None):
         super().__init__()
 
-        self.config = config
         self.hidden_size = config.hidden_size
+        self.layer_idx = layer_idx
+        self.max_window_layers = config.max_window_layers
         self.num_heads = config.num_attention_heads
         self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = (
-            config.num_key_value_heads
-            if config.num_key_value_heads is not None
-            else config.num_attention_heads
-        )
+        self.num_key_value_heads = config.num_key_value_heads
+        self.sliding_window = config.sliding_window
         self.attention_dropout = config.attention_dropout
+        self.use_sliding_window = config.use_sliding_window
 
         if (self.head_dim * self.num_heads) != self.hidden_size:
             raise ValueError(
@@ -193,20 +195,16 @@ class UnpaddedLlamaAttention(nn.Module):
             )
 
         self.q_proj = nn.Linear(
-            self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
+            self.hidden_size, self.num_heads * self.head_dim, bias=True
         )
         self.k_proj = nn.Linear(
-            self.hidden_size,
-            self.num_key_value_heads * self.head_dim,
-            bias=config.attention_bias,
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
         )
         self.v_proj = nn.Linear(
-            self.hidden_size,
-            self.num_key_value_heads * self.head_dim,
-            bias=config.attention_bias,
+            self.hidden_size, self.num_key_value_heads * self.head_dim, bias=True
         )
         self.o_proj = nn.Linear(
-            self.num_heads * self.head_dim, self.hidden_size, bias=config.attention_bias
+            self.num_heads * self.head_dim, self.hidden_size, bias=False
         )
 
     def forward(
@@ -239,26 +237,37 @@ class UnpaddedLlamaAttention(nn.Module):
             query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
         )
 
+        use_sliding_window = (
+            self.use_sliding_window and self.layer_idx < self.max_window_layers
+        )
+
         # flash attn
+        query_states = query_states.to(torch.bfloat16)
+        key_states = key_states.to(torch.bfloat16)
+        value_states = value_states.to(torch.bfloat16)
         if cu_seqlens[-1] == max_seqlen:
-            attn_output = flash_attn_func(
+            attn_output = zigzag_ring_flash_attn_func(
                 q=query_states.unsqueeze(0),
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if use_sliding_window
+                else (-1, -1),
             )
         else:
-            attn_output = flash_attn_varlen_func(
+            attn_output = zigzag_ring_flash_attn_varlen_func(
                 q=query_states,
                 k=key_states,
                 v=value_states,
-                cu_seqlens_q=cu_seqlens,
-                cu_seqlens_k=cu_seqlens,
-                max_seqlen_q=max_seqlen,
-                max_seqlen_k=max_seqlen,
+                cu_seqlens=cu_seqlens,
+                max_seqlen=max_seqlen,
                 dropout_p=self.attention_dropout if self.training else 0.0,
                 causal=True,
+                window_size=(self.sliding_window, self.sliding_window)
+                if use_sliding_window
+                else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]
@@ -266,17 +275,17 @@ class UnpaddedLlamaAttention(nn.Module):
         return self.o_proj(attn_output)
 
 
-class UnpaddedLlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig):
+class UnpaddedQwen2DecoderLayer(nn.Module):
+    def __init__(self, config: Qwen2Config, layer_idx: Optional[int] = None):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.self_attn = UnpaddedLlamaAttention(config=config)
-        self.mlp = UnpaddedLlamaMLP(config=config)
-        self.input_layernorm = UnpaddedLlamaRMSNorm(
+        self.self_attn = UnpaddedQwen2Attention(config=config, layer_idx=layer_idx)
+        self.mlp = UnpaddedQwen2MLP(config=config)
+        self.input_layernorm = UnpaddedQwen2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.post_attention_layernorm = UnpaddedLlamaRMSNorm(
+        self.post_attention_layernorm = UnpaddedQwen2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
@@ -317,11 +326,11 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
         return nz_hidden_states
 
 
-class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
-    config_class = LlamaConfig
+class UnpaddedQwen2PreTrainedModel(PreTrainedModel):
+    config_class = Qwen2Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["UnpaddedLlamaDecoderLayer"]
+    _no_split_modules = ["UnpaddedQwen2DecoderLayer"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -335,15 +344,15 @@ class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
+class UnpaddedQwen2Model(UnpaddedQwen2PreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedLlamaDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedQwen2DecoderLayer`]
 
     Args:
-        config: LlamaConfig
+        config: Qwen2Config
     """
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: Qwen2Config):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
@@ -351,16 +360,20 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        self.rotary_emb = UnpaddedLlamaRotaryEmbedding(
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
+        self.rotary_emb = UnpaddedQwen2RotaryEmbedding(
             config.hidden_size // config.num_attention_heads,
             max_position_embeddings=2048,
-            base=config.rope_theta,
+            base=rope_theta,
         )
 
         self.layers = nn.ModuleList(
-            [UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+            [
+                UnpaddedQwen2DecoderLayer(config, layer_idx)
+                for layer_idx in range(config.num_hidden_layers)
+            ]
         )
-        self.norm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = UnpaddedQwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -414,15 +427,11 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         return nz_hidden_states
 
 
-class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
-    # Ignore rotary emb inv_freq on load, as they will be calculated on creation
-    _keys_to_ignore_on_load_unexpected = [
-        r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"
-    ]
-
+class Qwen2ForCausalLM(UnpaddedQwen2PreTrainedModel):
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     def __init__(self, config):
         super().__init__(config)
-        self.model = UnpaddedLlamaModel(config)
+        self.model = UnpaddedQwen2Model(config)
 
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
@@ -454,10 +463,10 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         nz_position_ids: torch.Tensor,
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
+        total_seqs: float,
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
-        num_seq: int = 0,
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
@@ -481,6 +490,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
             
             # Iterate through the sequence in chunks
             if chunk_size > 0:
+                # Iterate through the sequence in chunks
                 for i in range(0, hidden_states.size(0), chunk_size):
                     # 1. Grab chunks
                     hidden_chunk = hidden_states[i : i + chunk_size]
@@ -507,10 +517,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
-            if num_seq > 0:
-                loss = (total_loss / num_seq, total_acc / num_seq)
-            else:
-                loss = (total_loss, total_acc)
+            loss = (total_loss / total_seqs, total_acc / total_seqs)
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore

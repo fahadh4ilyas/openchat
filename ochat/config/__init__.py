@@ -4,148 +4,1147 @@ import torch
 import transformers
 
 from ochat.config.model_config import ModelConfig
-from ochat.config.conversation_template import Message, Conversation, ConversationTemplate
+from ochat.config.conversation_template import (
+    Conversation,
+    ConversationOpenAI,
+    PretokenizedConversation,
+    PretrainingText,
+    ConversationTemplate,
+    ChatMLConversationTemplate,
+    DeepseekConversationTemplate
+)
 import ochat.models
 
 
-_GEMMA_IT_PREFIXES = {
-    "user": "user",
-    "assistant": "model"
+_V3_2_PREFIXES = {
+    # OpenAI mapping
+    "user": "User:",
+    "assistant": "Assistant:",
+}
+
+PREFIXES = {
+    "gemma": {"user": "user", "assistant": "model"},
+    "gemma2": {"user": "user", "assistant": "model"},
 }
 
 
-def _v3_2_role_prefix(from_role, condition):
-    return f"{condition} {from_role.title()}:".strip()
+def _v3_2_role_prefix(from_role: str, condition: str):
+    return f"{condition} {_V3_2_PREFIXES.get(from_role, from_role+':')}".strip()
 
 
-def _v3_6_role_prefix(from_role, condition, role_start_token, role_end_token):
-    return role_start_token + f"{condition} {from_role.title()}".strip() + role_end_token
+def _chatml_role_prefix(from_role: str, condition: str, model: str):
+    return f"{condition} {PREFIXES.get(model, {}).get(from_role, from_role)}".strip()
 
 
 MODEL_CONFIG_MAP = {
-    # OpenChat V3.6 (llama 3)
-    "openchat_3.6": ModelConfig(
-        # Model
-        model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=True),  # Llama 3 only has fast tokenizer
-        model_create_for_training=partial(ochat.models.LlamaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-        # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=partial(_v3_6_role_prefix,
-                                                          role_start_token="<|start_header_id|>",
-                                                          role_end_token="<|end_header_id|>\n\n"),
-                                      eot="<|eot_id|>",
-                                      system_as_role=True,
-                                      inference_condition="GPT4 Correct"),
-        hf_chat_template="{{ bos_token }}{% for message in messages %}{% if message['role'] in ['user', 'assistant'] %}{% set content = '<|start_header_id|>GPT4 Correct ' + message['role'].title() + '<|end_header_id|>\n\n' + message['content'] | trim + '<|eot_id|>' %}{% elif message['role'] == 'system' %}{% set content = '<|start_header_id|>System<|end_header_id|>\n\n' + message['content'] | trim + '<|eot_id|>' %}{% else %}{{ raise_exception('Only user, assistant and system roles are supported!') }}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>GPT4 Correct Assistant<|end_header_id|>\n\n' }}{% endif %}",
-    ),
-
     # OpenChat V3.2
-    "openchat_v3.2": ModelConfig(
+    "llama": ModelConfig(
         # Model
         model_max_context=4096,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=False),
-        model_create_for_training=partial(ochat.models.LlamaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=_v3_2_role_prefix,
-                                      eot="<|end_of_turn|>",
-                                      inference_condition="GPT4")
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4",
+        ),
     ),
-
-    "openchat_v3.2_mistral": ModelConfig(
-        serving_aliases=("openchat_3.5", ),
-
+    "llamaSplit": ModelConfig(
         # Model
-        model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=True),
-        model_create_for_training=partial(ochat.models.MistralForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
+        model_max_context=4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaSplitForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=_v3_2_role_prefix,
-                                      eot="<|end_of_turn|>",
-                                      inference_condition="GPT4 Correct"),
-        hf_chat_template="{{ bos_token }}{% for message in messages %}{% if message['role'] in ['user', 'assistant'] %}{% set content = 'GPT4 Correct ' + message['role'].title() + ': ' + message['content'] + '<|end_of_turn|>' %}{% elif message['role'] == 'system' %}{% set content = message['content'] + '<|end_of_turn|>' %}{% else %}{{ raise_exception('Only user, assistant and system roles are supported!') }}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ 'GPT4 Correct Assistant:' }}{% endif %}",    ),
-
-    "openchat_v3.2_gemma_new": ModelConfig(
-        serving_aliases=("openchat_3.5_gemma_new", ),
-
-        # Model
-        model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=True),
-        model_create_for_training=partial(ochat.models.GemmaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
-        # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=_v3_2_role_prefix,
-                                      eot="<end_of_turn>",
-                                      inference_condition="GPT4 Correct"),
-        hf_chat_template="{{ bos_token }}{% for message in messages %}{% if message['role'] in ['user', 'assistant'] %}{% set content = 'GPT4 Correct ' + message['role'].title() + ': ' + message['content'] + '<end_of_turn>' %}{% elif message['role'] == 'system' %}{% set content = message['content'] + '<end_of_turn>' %}{% else %}{{ raise_exception('Only user, assistant and system roles are supported!') }}{% endif %}{{ content }}{% endfor %}{% if add_generation_prompt %}{{ 'GPT4 Correct Assistant:' }}{% endif %}",
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4",
+        ),
     ),
-
-    ### Other models
-    "chatml_8192": ModelConfig(
+    "llamaLong": ModelConfig(
         # Model
-        model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=True),
-        model_create_for_training=lambda x: None,
-
+        model_max_context=8 * 4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaLongForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=lambda from_role, condition: f"<|im_start|>{from_role}\n",
-                                      eot="<|im_end|>",
-                                      inference_condition="")
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4",
+        ),
     ),
-    "zephyr_mistral": ModelConfig(
+    "llamaRing": ModelConfig(
         # Model
-        model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=False),
-        model_create_for_training=partial(ochat.models.MistralForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=lambda from_role, condition: f"<|{from_role}|>\n",
-                                      eot="</s>",
-                                      inference_condition="")
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4",
+        ),
     ),
-    "gemma_it": ModelConfig(
+    "llama3": ModelConfig(
         # Model
         model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=False),
-        model_create_for_training=partial(ochat.models.GemmaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=lambda from_role, condition: f"<start_of_turn>{_GEMMA_IT_PREFIXES[from_role]}\n",
-                                      eot="<end_of_turn>",
-                                      inference_condition="")
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
+            sep="\n\n",
+            conv_sep="",
+            inference_condition="GPT4",
+        ),
     ),
-    "llama3_instruct": ModelConfig(
+    "llama3Ring": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
+            sep="\n\n",
+            conv_sep="",
+            inference_condition="GPT4",
+        ),
+    ),
+    "llama3.1": ModelConfig(
+        # Model
+        model_max_context=2**17,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaLongForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
+            sep="\n\n",
+            conv_sep="",
+            inference_condition="GPT4",
+        ),
+    ),
+    "llama3.1Ring": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaLongRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>",
+            sep="\n\n",
+            conv_sep="",
+            inference_condition="GPT4",
+        ),
+    ),
+    "mistral": ModelConfig(
         # Model
         model_max_context=8192,
-        model_tokenizer_create=partial(transformers.AutoTokenizer.from_pretrained, use_fast=True),  # Llama 3 only has fast tokenizer
-        model_create_for_training=partial(ochat.models.LlamaForCausalLM.from_pretrained,
-                                          low_cpu_mem_usage=True,
-                                          torch_dtype=torch.bfloat16),
-
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
         # Conversation Template
-        conversation_template=partial(ConversationTemplate,
-                                      role_prefix=lambda from_role, condition: f"<|start_header_id|>{from_role}<|end_header_id|>\n\n",
-                                      eot="<|eot_id|>",
-                                      inference_condition="")
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "mistralSplit": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralSplitForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "mistralLong": ModelConfig(
+        # Model
+        model_max_context=4 * 8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralLongForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "mistralRing": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "mixtral": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MixtralForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "mixtralRing": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MixtralRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "phi": ModelConfig(
+        # Model
+        model_max_context=2048,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.PhiForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "phi_ori": ModelConfig(
+        # Model
+        model_max_context=2048,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.OriPhiForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "gemma": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "gemmaRing": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "gemma2": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen2": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen2Ring": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3Ring": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3Moe": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3MoeRing": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3_5": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "qwen3_5Moe": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ConversationTemplate,
+            role_prefix=_v3_2_role_prefix,
+            eot="<|end_of_turn|>",
+            inference_condition="GPT4 Correct",
+        ),
+    ),
+    "deepseekv2": ModelConfig(
+        # Model
+        model_max_context=163840,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=True
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.DeepseekV2ForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "llama_chatml": ModelConfig(
+        # Model
+        model_max_context=4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4",
+        ),
+    ),
+    "llamaSplit_chatml": ModelConfig(
+        # Model
+        model_max_context=4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaSplitForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4",
+        ),
+    ),
+    "llamaLong_chatml": ModelConfig(
+        # Model
+        model_max_context=8 * 4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaLongForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4",
+        ),
+    ),
+    "llamaRing_chatml": ModelConfig(
+        # Model
+        model_max_context=4096,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),
+        model_create_for_training=partial(
+            ochat.models.LlamaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="llama",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4",
+        ),
+    ),
+    "mistral_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mistral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "mistralSplit_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralSplitForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mistral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "mistralLong_chatml": ModelConfig(
+        # Model
+        model_max_context=4 * 8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralLongForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mistral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "mistralRing_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mistral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "mixtral_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MixtralForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mixtral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "mixtralRing_chatml": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MixtralRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mixtral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "phi_chatml": ModelConfig(
+        # Model
+        model_max_context=2048,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.PhiForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="phi",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "phi_ori_chatml": ModelConfig(
+        # Model
+        model_max_context=2048,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.OriPhiForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="phi",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemma_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma_chatml",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemmaRing_chatml": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma_chatml",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemma2_chatml": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma2_chatml",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemma_instruct": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemmaRing_instruct": ModelConfig(
+        # Model
+        model_max_context=2**19,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.GemmaRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "gemma2_instruct": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Gemma2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="gemma2",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<start_of_turn>{role}\n{text}<end_of_turn>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen2_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen2",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen2Ring_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen2",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3Ring_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3Moe_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3Moe",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3MoeRing_chatml": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3Moe",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_5_chatml": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5ForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3_5",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen3_5Moe_chatml": ModelConfig(
+        # Model
+        model_max_context=262144,
+        model_tokenizer_create=transformers.AutoProcessor.from_pretrained,  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3_5MoeForConditionalGeneration.from_pretrained, dtype=torch.bfloat16, attn_implementation='flash_attention_2'
+        ),
+        model_has_processor=True,
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="qwen3_5_moe",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|im_start|>{role}\n{text}<|im_end|>",
+            inference_condition="GPT4 correct",
+        ),
+    ),
+    "qwen2_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen2Ring_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen2RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen3_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3ForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen3Ring_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3RingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen3Moe_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "qwen3MoeRing_deepseek": ModelConfig(
+        # Model
+        model_max_context=32768,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.Qwen3MoeRingForCausalLM.from_pretrained,
+            dtype=torch.bfloat16,
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            DeepseekConversationTemplate,
+            prompt_format={
+                "user": "<｜{role}｜>{text}",
+                "assistant": "<｜{role}｜>{text}<｜end▁of▁sentence｜>",
+            },
+        ),
+    ),
+    "zephyr": ModelConfig(
+        # Model
+        model_max_context=8192,
+        model_tokenizer_create=partial(
+            transformers.AutoTokenizer.from_pretrained, use_fast=False
+        ),  # Mistral use legacy=True https://huggingface.co/mistralai/Mistral-7B-v0.1/blob/main/tokenizer_config.json
+        model_create_for_training=partial(
+            ochat.models.MistralForCausalLM.from_pretrained, dtype=torch.bfloat16
+        ),
+        # Conversation Template
+        conversation_template=partial(
+            ChatMLConversationTemplate,
+            model="mistral",
+            role_prefix=_chatml_role_prefix,
+            prompt_format="<|{role}|>\n{text}</s>",
+            inference_condition="",
+        ),
     ),
 }

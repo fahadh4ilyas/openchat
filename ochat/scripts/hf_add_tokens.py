@@ -1,52 +1,31 @@
 import argparse
+import typing
 
 import transformers
-import torch
+
+from pydantic import BaseModel, Field, field_validator as validator
 
 
-def add_tokens_to_embedding(added_special_tokens, embedding):
-    # Mean embedding, shape: [1, dim]
-    new_token_embeddings = torch.mean(embedding.to(torch.float32), dim=0, keepdim=True).to(embedding.dtype)
-    # Expand to [N, dim]
-    new_token_embeddings = new_token_embeddings.expand(len(added_special_tokens), -1)
+class Arguments(BaseModel):
+    model_path: str = Field(...)
+    output_dir: str = Field(...)
+    added_special_tokens: typing.List[str] = Field([])
+    added_tokens: typing.List[str] = Field([])
 
-    return torch.cat([embedding, new_token_embeddings], dim=0)
-
-
-def hf_add_tokens(model_path, output_dir, added_special_tokens):
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
-    model = transformers.AutoModelForCausalLM.from_pretrained(model_path,
-                                                              low_cpu_mem_usage=True,
-                                                              torch_dtype=torch.bfloat16)
-    # Add tokens (tokenizer)
-    tokenizer.add_special_tokens({"additional_special_tokens": added_special_tokens})
-
-    # Add tokens (embedding)
-    assert model.model.embed_tokens.weight.requires_grad
-    assert model.lm_head.weight.requires_grad
-
-    model.model.embed_tokens.weight = torch.nn.Parameter(add_tokens_to_embedding(added_special_tokens, model.model.embed_tokens.weight), requires_grad=True)
-    model.lm_head.weight            = torch.nn.Parameter(add_tokens_to_embedding(added_special_tokens, model.lm_head.weight), requires_grad=True)
-
-    model.config.vocab_size += len(added_special_tokens)
-
-    # Fix model config (Mistral's actual token length is 8192)
-    if "mistral" in model_path.lower():
-        assert model.config.max_position_embeddings == 32768
-        model.config.max_position_embeddings = 8192
-
-    print ({k: v.shape for k, v in model.state_dict().items()})
-
-    # Save
-    tokenizer.save_pretrained(output_dir)
-    model.save_pretrained(output_dir)
+    @validator("added_tokens")
+    def validate_tokens(
+        cls, value: typing.List[str], values: typing.Dict[str, typing.Any]
+    ) -> typing.List[str]:
+        if len(value + values.get("added_special_tokens", [])) == 0:
+            raise ValueError("At least one token added!")
+        return value
 
 
-def main():
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model-path",
-        help="Location of Mistral model, or HuggingFace repo ID",
+        help="Location of model, or HuggingFace repo ID",
     )
     parser.add_argument(
         "--output-dir",
@@ -54,13 +33,54 @@ def main():
     )
     parser.add_argument(
         "--added-special-tokens",
+        default=[],
         type=str,
-        nargs="+",
-        help="Special token list to add"
+        nargs="*",
+        help="Special token list to add",
+    )
+    parser.add_argument(
+        "--added-tokens", default=[], type=str, nargs="*", help="Token list to add"
     )
 
-    hf_add_tokens(**vars(parser.parse_args()))
+    args, _ = parser.parse_known_args()
+
+    return args
+
+
+def main(args: Arguments):
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.model_path)
+    model: transformers.PreTrainedModel = (
+        transformers.AutoModelForCausalLM.from_pretrained(
+            args.model_path, low_cpu_mem_usage=True, torch_dtype="auto"
+        )
+    )
+
+    # Add tokens (tokenizer)
+    tokenizer.add_tokens(args.added_special_tokens, special_tokens=True)
+    tokenizer.add_special_tokens(
+        {
+            "additional_special_tokens": list(
+                set(
+                    tokenizer.special_tokens_map_extended.get(
+                        "additional_special_tokens", []
+                    )
+                    + args.added_special_tokens
+                )
+            )
+        },
+        replace_additional_special_tokens=False,
+    )
+    tokenizer.add_tokens(args.added_tokens)
+
+    # Add tokens (embedding)
+    model.resize_token_embeddings(len(tokenizer))
+
+    # Save
+    tokenizer.save_pretrained(args.output_dir)
+    model.save_pretrained(args.output_dir)
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    args = Arguments(**vars(args))
+    main(args)

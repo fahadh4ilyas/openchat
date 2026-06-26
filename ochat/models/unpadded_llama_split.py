@@ -166,7 +166,47 @@ class UnpaddedLlamaMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
+        if self.pretraining_tp > 1:
+            slice = -(-self.intermediate_size // self.pretraining_tp)
+            gate_proj_slices = self.gate_proj.weight.split(slice, dim=0)
+            up_proj_slices = self.up_proj.weight.split(slice, dim=0)
+            down_proj_slices = self.down_proj.weight.split(slice, dim=1)
+
+            gate_proj = torch.cat(
+                [
+                    nn.functional.linear(x, gate_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ],
+                dim=-1,
+            )
+            up_proj = torch.cat(
+                [
+                    nn.functional.linear(x, up_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ],
+                dim=-1,
+            )
+
+            intermediate_states = (self.act_fn(gate_proj) * up_proj).split(
+                slice, dim=-1
+            )
+
+            return torch.stack(
+                [
+                    nn.functional.linear(intermediate_states[i], down_proj_slices[i])
+                    for i in range(self.pretraining_tp)
+                ]
+            ).sum(dim=0)
+
+        splitted_x = x.split(4096, dim=0)
+
+        return torch.cat(
+            [
+                self.down_proj(self.act_fn(self.gate_proj(x_in)) * self.up_proj(x_in))
+                for x_in in splitted_x
+            ],
+            dim=0,
+        )
 
 
 class UnpaddedLlamaAttention(nn.Module):
@@ -223,15 +263,59 @@ class UnpaddedLlamaAttention(nn.Module):
         # nz_position_ids:  [nnz]
         # cu_seqlens:       [bs + 1]
 
-        query_states = self.q_proj(nz_hidden_states).view(
-            -1, self.num_heads, self.head_dim
-        )
-        key_states = self.k_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
-        )
-        value_states = self.v_proj(nz_hidden_states).view(
-            -1, self.num_key_value_heads, self.head_dim
-        )
+        if self.config.pretraining_tp > 1:
+            q_slice = -(-self.num_heads * self.head_dim // self.config.pretraining_tp)
+            kv_slice = -(
+                -self.num_key_value_heads * self.head_dim // self.config.pretraining_tp
+            )
+            q_proj_slices = self.q_proj.weight.split(q_slice, dim=0)
+            k_proj_slices = self.k_proj.weight.split(kv_slice, dim=0)
+            v_proj_slices = self.v_proj.weight.split(kv_slice, dim=0)
+
+            query_states = torch.cat(
+                [
+                    nn.functional.linear(nz_hidden_states, q_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
+            ).view(-1, self.num_heads, self.head_dim)
+            key_states = torch.cat(
+                [
+                    nn.functional.linear(nz_hidden_states, k_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
+            value_states = torch.cat(
+                [
+                    nn.functional.linear(nz_hidden_states, v_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ],
+                dim=-1,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
+        else:
+            splitted_nz_hidden_states = nz_hidden_states.split(4096, dim=0)
+            query_states = torch.cat(
+                [
+                    self.q_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_heads, self.head_dim)
+            key_states = torch.cat(
+                [
+                    self.k_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
+            value_states = torch.cat(
+                [
+                    self.v_proj(nz_hidden_states_in)
+                    for nz_hidden_states_in in splitted_nz_hidden_states
+                ],
+                dim=0,
+            ).view(-1, self.num_key_value_heads, self.head_dim)
 
         # RoPE
         cos, sin = cos_sin
@@ -263,7 +347,24 @@ class UnpaddedLlamaAttention(nn.Module):
 
         # attn_output: [total_nnz, num_heads, head_dim]
         attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
-        return self.o_proj(attn_output)
+
+        if self.config.pretraining_tp > 1:
+            slice = -(-self.hidden_size // self.config.pretraining_tp)
+            attn_output_slice = attn_output.split(slice, dim=-1)
+            o_proj_slices = self.o_proj.weight.split(slice, dim=1)
+
+            return torch.stack(
+                [
+                    nn.functional.linear(attn_output_slice[i], o_proj_slices[i])
+                    for i in range(self.config.pretraining_tp)
+                ]
+            ).sum(dim=0)
+
+        splitted_attn_output = attn_output.split(4096, dim=0)
+        return torch.cat(
+            [self.o_proj(attn_output_in) for attn_output_in in splitted_attn_output],
+            dim=0,
+        )
 
 
 class UnpaddedLlamaDecoderLayer(nn.Module):

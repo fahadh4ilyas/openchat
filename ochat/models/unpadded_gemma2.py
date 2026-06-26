@@ -17,7 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch Unpadded & Fused LLaMA model. Compatible with HF. """
+""" PyTorch Unpadded & Fused Gemma2 model. Compatible with HF. """
 
 from typing import Optional, Tuple
 
@@ -28,7 +28,7 @@ from transformers.activations import ACT2FN
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
-from transformers.models.llama.configuration_llama import LlamaConfig
+from transformers.models.gemma2.configuration_gemma2 import Gemma2Config
 
 try:
     from flash_attn.flash_attn_interface import flash_attn_func, flash_attn_varlen_func
@@ -43,7 +43,6 @@ from ochat.kernel.rope import fast_rope_embedding
 logger = logging.get_logger(__name__)
 
 
-@torch.jit.script  # type: ignore
 def weighted_token_accuracy(
     logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
 ):
@@ -66,9 +65,10 @@ def rms_norm(
     input_dtype = hidden_states.dtype
     hidden_states = hidden_states.to(torch.float32)
 
-    variance = (hidden_states * hidden_states).mean(-1, keepdim=True)
+    variance = hidden_states.pow(2).mean(-1, keepdim=True)
     hidden_states = hidden_states * torch.rsqrt(variance + variance_epsilon)
-    return weight * hidden_states.to(input_dtype)
+    output = (1 + weight.to(torch.float32)) * hidden_states
+    return output.to(input_dtype)
 
 
 def rotate_half(x: torch.Tensor):
@@ -100,23 +100,25 @@ def apply_rotary_pos_emb(
     return q_embed.to(base_dtype), k_embed.to(base_dtype)
 
 
-class UnpaddedLlamaRMSNorm(nn.Module):
+class UnpaddedGemma2RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps):
         """
-        UnpaddedLlamaRMSNorm is equivalent to T5LayerNorm
+        UnpaddedGemma2RMSNorm is equivalent to T5LayerNorm
         """
         super().__init__()
 
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = nn.Parameter(torch.zeros(hidden_size))
         self.variance_epsilon = eps
 
     def forward(self, hidden_states, use_fast_norm: bool = False):
         if use_fast_norm:
-            return fast_rms_layernorm(hidden_states, self.weight, self.variance_epsilon)
+            return fast_rms_layernorm(
+                hidden_states, self.weight, self.variance_epsilon, gemma=True
+            )
         return rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
-class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
+class UnpaddedGemma2RotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
@@ -151,46 +153,37 @@ class UnpaddedLlamaRotaryEmbedding(torch.nn.Module):
         return self.cos_cached, self.sin_cached
 
 
-class UnpaddedLlamaMLP(nn.Module):
-    def __init__(self, config: LlamaConfig):
+class UnpaddedGemma2MLP(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        hidden_act: str,
+    ):
         super().__init__()
-        self.gate_proj = nn.Linear(
-            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
-        )
-        self.down_proj = nn.Linear(
-            config.intermediate_size, config.hidden_size, bias=config.mlp_bias
-        )
-        self.up_proj = nn.Linear(
-            config.hidden_size, config.intermediate_size, bias=config.mlp_bias
-        )
-        self.act_fn = ACT2FN[config.hidden_act]
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.act_fn = ACT2FN[hidden_act]
 
     def forward(self, x):
         return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
 
 
-class UnpaddedLlamaAttention(nn.Module):
+class UnpaddedGemma2Attention(nn.Module):
     """Multi-headed attention from 'Attention Is All You Need' paper"""
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: Gemma2Config, layer_idx: int):
         super().__init__()
 
         self.config = config
         self.hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
-        self.head_dim = self.hidden_size // self.num_heads
-        self.num_key_value_heads = (
-            config.num_key_value_heads
-            if config.num_key_value_heads is not None
-            else config.num_attention_heads
-        )
+        self.head_dim = config.head_dim
+        self.num_key_value_heads = config.num_key_value_heads
         self.attention_dropout = config.attention_dropout
-
-        if (self.head_dim * self.num_heads) != self.hidden_size:
-            raise ValueError(
-                f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
-                f" and `num_heads`: {self.num_heads})."
-            )
+        self.scaling = config.query_pre_attn_scalar**-0.5
+        self.sliding_window = config.sliding_window if not bool(layer_idx % 2) else None
 
         self.q_proj = nn.Linear(
             self.hidden_size, self.num_heads * self.head_dim, bias=config.attention_bias
@@ -235,6 +228,8 @@ class UnpaddedLlamaAttention(nn.Module):
 
         # RoPE
         cos, sin = cos_sin
+        cos = cos.to(value_states.dtype)
+        sin = sin.to(value_states.dtype)
         query_states, key_states = apply_rotary_pos_emb(
             query_states, key_states, cos, sin, nz_position_ids, use_fast_rope
         )
@@ -246,7 +241,12 @@ class UnpaddedLlamaAttention(nn.Module):
                 k=key_states.unsqueeze(0),
                 v=value_states.unsqueeze(0),
                 dropout_p=self.attention_dropout if self.training else 0.0,
+                softmax_scale=self.scaling,
                 causal=True,
+                softcap=self.config.attn_logit_softcapping,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
             )
         else:
             attn_output = flash_attn_varlen_func(
@@ -258,25 +258,40 @@ class UnpaddedLlamaAttention(nn.Module):
                 max_seqlen_q=max_seqlen,
                 max_seqlen_k=max_seqlen,
                 dropout_p=self.attention_dropout if self.training else 0.0,
+                softmax_scale=self.scaling,
                 causal=True,
+                softcap=self.config.attn_logit_softcapping,
+                window_size=(self.sliding_window, self.sliding_window)
+                if self.sliding_window is not None
+                else (-1, -1),
             )
 
         # attn_output: [total_nnz, num_heads, head_dim]
-        attn_output = attn_output.view(-1, self.hidden_size)  # type: ignore
+        attn_output = attn_output.view(-1, self.num_heads * self.head_dim)  # type: ignore
         return self.o_proj(attn_output)
 
 
-class UnpaddedLlamaDecoderLayer(nn.Module):
-    def __init__(self, config: LlamaConfig):
+class UnpaddedGemma2DecoderLayer(nn.Module):
+    def __init__(self, config: Gemma2Config, layer_idx: int):
         super().__init__()
 
         self.hidden_size = config.hidden_size
-        self.self_attn = UnpaddedLlamaAttention(config=config)
-        self.mlp = UnpaddedLlamaMLP(config=config)
-        self.input_layernorm = UnpaddedLlamaRMSNorm(
+        self.self_attn = UnpaddedGemma2Attention(config=config, layer_idx=layer_idx)
+        self.mlp = UnpaddedGemma2MLP(
+            hidden_size=self.hidden_size,
+            intermediate_size=config.intermediate_size,
+            hidden_act=config.hidden_activation,
+        )
+        self.input_layernorm = UnpaddedGemma2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.post_attention_layernorm = UnpaddedLlamaRMSNorm(
+        self.post_attention_layernorm = UnpaddedGemma2RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.pre_feedforward_layernorm = UnpaddedGemma2RMSNorm(
+            config.hidden_size, eps=config.rms_norm_eps
+        )
+        self.post_feedforward_layernorm = UnpaddedGemma2RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
 
@@ -303,25 +318,31 @@ class UnpaddedLlamaDecoderLayer(nn.Module):
             max_seqlen=max_seqlen,
             use_fast_rope=use_fast_rope,
         )
+        nz_hidden_states = self.post_attention_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states = residual + nz_hidden_states
 
         # Fully Connected
         residual = nz_hidden_states
 
-        nz_hidden_states = self.post_attention_layernorm(
+        nz_hidden_states = self.pre_feedforward_layernorm(
             nz_hidden_states, use_fast_norm
         )
         nz_hidden_states = self.mlp(nz_hidden_states)
+        nz_hidden_states = self.post_feedforward_layernorm(
+            nz_hidden_states, use_fast_norm
+        )
         nz_hidden_states = residual + nz_hidden_states
 
         return nz_hidden_states
 
 
-class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
-    config_class = LlamaConfig
+class UnpaddedGemma2PreTrainedModel(PreTrainedModel):
+    config_class = Gemma2Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["UnpaddedLlamaDecoderLayer"]
+    _no_split_modules = ["UnpaddedGemma2DecoderLayer"]
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -335,32 +356,34 @@ class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
+class UnpaddedGemma2Model(UnpaddedGemma2PreTrainedModel):
     """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedLlamaDecoderLayer`]
+    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`UnpaddedGemma2DecoderLayer`]
 
     Args:
-        config: LlamaConfig
+        config: Gemma2Config
     """
 
-    def __init__(self, config: LlamaConfig):
+    def __init__(self, config: Gemma2Config):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
+        self.hidden_size = config.hidden_size
 
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        self.rotary_emb = UnpaddedLlamaRotaryEmbedding(
-            config.hidden_size // config.num_attention_heads,
-            max_position_embeddings=2048,
-            base=config.rope_theta,
+        self.rotary_emb = UnpaddedGemma2RotaryEmbedding(
+            config.head_dim, max_position_embeddings=2048, base=config.rope_theta
         )
 
         self.layers = nn.ModuleList(
-            [UnpaddedLlamaDecoderLayer(config) for _ in range(config.num_hidden_layers)]
+            [
+                UnpaddedGemma2DecoderLayer(config, i)
+                for i in range(config.num_hidden_layers)
+            ]
         )
-        self.norm = UnpaddedLlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = UnpaddedGemma2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
@@ -383,6 +406,8 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         use_fast_rope: bool = False,
     ) -> torch.Tensor:
         nz_hidden_states = self.embed_tokens(nz_input_ids)
+        normalizer = torch.tensor(self.hidden_size**0.5, dtype=nz_hidden_states.dtype)
+        nz_hidden_states = nz_hidden_states * normalizer
         cos_sin = self.rotary_emb(max_seqlen)
 
         # decoder layers
@@ -414,7 +439,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         return nz_hidden_states
 
 
-class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
+class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
     # Ignore rotary emb inv_freq on load, as they will be calculated on creation
     _keys_to_ignore_on_load_unexpected = [
         r"model\.layers\.\d+\.self_attn\.rotary_emb\.inv_freq"
@@ -422,9 +447,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = UnpaddedLlamaModel(config)
-
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.model = UnpaddedGemma2Model(config)
 
         # Initialize weights and apply final processing
         self.post_init()
@@ -436,10 +459,10 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         self.model.embed_tokens = value
 
     def get_output_embeddings(self):
-        return self.lm_head
+        return self.model.embed_tokens
 
     def set_output_embeddings(self, new_embeddings):
-        self.lm_head = new_embeddings
+        self.model.embed_tokens = new_embeddings
 
     def set_decoder(self, decoder):
         self.model = decoder
@@ -457,7 +480,7 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
         # Unpadded labels
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
-        num_seq: int = 0,
+        num_seq: int = 1,
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
@@ -482,27 +505,39 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
             # Iterate through the sequence in chunks
             if chunk_size > 0:
                 for i in range(0, hidden_states.size(0), chunk_size):
-                    # 1. Grab chunks
+                    # 1. Slice chunks
                     hidden_chunk = hidden_states[i : i + chunk_size]
                     label_chunk = nz_shifted_label_ids[i : i + chunk_size]
                     weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
                     
-                    # 2. Project ONLY this chunk to vocab size
-                    logits_chunk = self.lm_head(hidden_chunk)
+                    # 2. Project ONLY this chunk using the tied embedding weights
+                    logits_chunk = nn.functional.linear(hidden_chunk, self.model.embed_tokens.weight)
                     
-                    # 3. Compute loss and accuracy for this chunk
+                    # 3. Apply Gemma2 Softcapping to the chunk
+                    if self.config.final_logit_softcapping is not None:
+                        logits_chunk = logits_chunk / self.config.final_logit_softcapping
+                        logits_chunk = torch.tanh(logits_chunk)
+                        logits_chunk = logits_chunk * self.config.final_logit_softcapping
+                    
+                    # 4. Compute metrics
                     chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
                     chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
                     
-                    # 4. Accumulate
+                    # 5. Accumulate
                     total_loss += chunk_loss
                     total_acc += chunk_acc
                     
-                    # 5. Free the massive chunk from VRAM immediately
+                    # 6. Free VRAM immediately
                     del logits_chunk
                     del hidden_chunk
             else:
-                logits = self.lm_head(hidden_states)
+                logits = nn.functional.linear(hidden_states, self.model.embed_tokens.weight)
+
+                if self.config.final_logit_softcapping is not None:
+                    logits = logits / self.config.final_logit_softcapping
+                    logits = torch.tanh(logits)
+                    logits = logits * self.config.final_logit_softcapping
+
                 total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
@@ -514,5 +549,5 @@ class LlamaForCausalLM(UnpaddedLlamaPreTrainedModel):
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=None,
+            logits=None, # NEVER return the full logits tensor
         )
