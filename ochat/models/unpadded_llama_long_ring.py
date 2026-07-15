@@ -171,6 +171,10 @@ class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
     ):
         super().__init__()
 
+        self.dim = dim
+        self.base = base
+        self._initial_max_position_embeddings = max_position_embeddings
+
         # RoPE
         inv_freq = 1.0 / (
             base
@@ -195,6 +199,14 @@ class UnpaddedLlamaLinearScalingRotaryEmbedding(torch.nn.Module):
         dtype = torch.get_default_dtype()
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def reset_parameters(self):
+        inv_freq = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=self.inv_freq.device).float() / self.dim)
+        )
+        self.inv_freq.copy_(inv_freq)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
 
     def forward(self, max_position_embeddings):
         if max_position_embeddings > self.max_position_embeddings:
@@ -229,6 +241,7 @@ class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
         self.attn_factor = attn_factor
         self.beta_fast = beta_fast
         self.beta_slow = beta_slow
+        self._initial_max_position_embeddings = max_position_embeddings
 
         self.yarn(device)
 
@@ -249,6 +262,10 @@ class UnpaddedLlamaYarnRotaryEmbedding(torch.nn.Module):
         self.register_buffer(
             "sin_cached", (emb.sin() * self.mscale).to(dtype), persistent=False
         )
+
+    def reset_parameters(self):
+        self.yarn(self.inv_freq.device)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
 
     def yarn(self, device):
         pos_freqs = self.base ** (
@@ -307,6 +324,10 @@ class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
     ):
         super().__init__()
 
+        self.dim = dim
+        self.base = base
+        self._initial_max_position_embeddings = max_position_embeddings
+
         # RoPE
         inv_freq = 1.0 / (
             base
@@ -345,6 +366,14 @@ class UnpaddedLlama3RotaryEmbedding(torch.nn.Module):
         dtype = torch.get_default_dtype()
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def reset_parameters(self):
+        inv_freq = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=self.inv_freq.device).float() / self.dim)
+        )
+        self.inv_freq.copy_(inv_freq)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
 
     def forward(self, max_position_embeddings):
         if max_position_embeddings > self.max_position_embeddings:
@@ -533,6 +562,12 @@ class UnpaddedLlamaPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+    def _initialize_missing_keys(self, is_quantized: bool) -> None:
+        super()._initialize_missing_keys(is_quantized)
+        for module in self.modules():
+            if isinstance(module, (UnpaddedLlamaLinearScalingRotaryEmbedding, UnpaddedLlamaYarnRotaryEmbedding, UnpaddedLlama3RotaryEmbedding)):
+                module.reset_parameters()
 
 
 class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):

@@ -169,6 +169,10 @@ class UnpaddedDeepseekV2RotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
+        self.dim = dim
+        self.base = base
+        self._initial_max_position_embeddings = max_position_embeddings
+
         # RoPE
         inv_freq = 1.0 / (
             base
@@ -192,6 +196,14 @@ class UnpaddedDeepseekV2RotaryEmbedding(torch.nn.Module):
         dtype = torch.get_default_dtype()
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def reset_parameters(self):
+        inv_freq = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=self.inv_freq.device).float() / self.dim)
+        )
+        self.inv_freq.copy_(inv_freq)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
 
     def forward(self, max_position_embeddings):
         if max_position_embeddings > self.max_position_embeddings:
@@ -228,6 +240,7 @@ class UnpaddedDeepseekV2YarnRotaryEmbedding(torch.nn.Module):
         self.max_position_embeddings = max_position_embeddings
         self.dim = dim
         self.base = base
+        self._initial_max_position_embeddings = max_position_embeddings
 
         freq_extra = 1.0 / (
             self.base
@@ -275,7 +288,31 @@ class UnpaddedDeepseekV2YarnRotaryEmbedding(torch.nn.Module):
         self.register_buffer(
             "sin_cached", (emb.sin() * _mscale).to(dtype), persistent=False
         )
-    
+
+    def reset_parameters(self):
+        freq_extra = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.float32, device=self.inv_freq.device) / self.dim)
+        )
+        freq_inter = 1.0 / (
+            self.scaling_factor
+            * self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.float32, device=self.inv_freq.device) / self.dim)
+        )
+        low, high = yarn_find_correction_range(
+            self.beta_fast,
+            self.beta_slow,
+            self.dim,
+            self.base,
+            self.original_max_position_embeddings,
+        )
+        inv_freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, self.dim // 2).to(
+            device=self.inv_freq.device, dtype=torch.float32
+        )
+        inv_freq = freq_inter * (1 - inv_freq_mask) + freq_extra * inv_freq_mask
+        self.inv_freq.copy_(inv_freq)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
+
     def forward(self, max_position_embeddings):
         if max_position_embeddings > self.max_position_embeddings:
             max_position_embeddings = -(-max_position_embeddings // 2048) * 2048
@@ -717,6 +754,12 @@ class UnpaddedDeepseekV2PreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+    def _initialize_missing_keys(self, is_quantized: bool) -> None:
+        super()._initialize_missing_keys(is_quantized)
+        for module in self.modules():
+            if isinstance(module, (UnpaddedDeepseekV2RotaryEmbedding, UnpaddedDeepseekV2YarnRotaryEmbedding)):
+                module.reset_parameters()
 
 
 class UnpaddedDeepseekV2Model(UnpaddedDeepseekV2PreTrainedModel):

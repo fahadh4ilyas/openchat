@@ -122,6 +122,10 @@ class UnpaddedGemma2RotaryEmbedding(torch.nn.Module):
     def __init__(self, dim, max_position_embeddings, base, device=None):
         super().__init__()
 
+        self.dim = dim
+        self.base = base
+        self._initial_max_position_embeddings = max_position_embeddings
+
         # RoPE
         inv_freq = 1.0 / (
             base
@@ -145,6 +149,14 @@ class UnpaddedGemma2RotaryEmbedding(torch.nn.Module):
         dtype = torch.get_default_dtype()
         self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
         self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def reset_parameters(self):
+        inv_freq = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, dtype=torch.int64, device=self.inv_freq.device).float() / self.dim)
+        )
+        self.inv_freq.copy_(inv_freq)
+        self.calculate_cos_sin(self._initial_max_position_embeddings)
 
     def forward(self, max_position_embeddings):
         if max_position_embeddings > self.max_position_embeddings:
@@ -354,6 +366,12 @@ class UnpaddedGemma2PreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=std)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
+
+    def _initialize_missing_keys(self, is_quantized: bool) -> None:
+        super()._initialize_missing_keys(is_quantized)
+        for module in self.modules():
+            if isinstance(module, UnpaddedGemma2RotaryEmbedding):
+                module.reset_parameters()
 
 
 class UnpaddedGemma2Model(UnpaddedGemma2PreTrainedModel):

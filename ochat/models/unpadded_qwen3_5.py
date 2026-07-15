@@ -150,6 +150,9 @@ class UnpaddedQwen3_5RotaryEmbedding(torch.nn.Module):
         self.mrope_section = mrope_section
         self.attention_scaling = 1.0
 
+        self.base = rope_theta
+        self.dim = self.rotary_dim
+
         inv_freq = 1.0 / (
             rope_theta ** (
                 torch.arange(0, self.rotary_dim, 2, device=device).float()
@@ -200,6 +203,13 @@ class UnpaddedQwen3_5RotaryEmbedding(torch.nn.Module):
         sin = sin.to(dtype=x.dtype)
 
         return cos, sin
+
+    def reset_parameters(self):
+        inv_freq = 1.0 / (
+            self.base
+            ** (torch.arange(0, self.dim, 2, device=self.inv_freq.device).float() / self.dim)
+        )
+        self.inv_freq.copy_(inv_freq)
 
 
 class UnpaddedQwen3_5MLP(nn.Module):
@@ -429,6 +439,12 @@ class UnpaddedQwen3_5PreTrainedModel(PreTrainedModel):
         elif isinstance(module, Qwen3_5VisionRotaryEmbedding):
             inv_freq = 1.0 / (module.theta ** (torch.arange(0, module.dim, 2, dtype=torch.float) / module.dim))
             init.copy_(module.inv_freq, inv_freq)
+
+    def _initialize_missing_keys(self, is_quantized: bool) -> None:
+        super()._initialize_missing_keys(is_quantized)
+        for module in self.modules():
+            if isinstance(module, UnpaddedQwen3_5RotaryEmbedding):
+                module.reset_parameters()
 
 
 class UnpaddedQwen3_5TextModel(UnpaddedQwen3_5PreTrainedModel):
