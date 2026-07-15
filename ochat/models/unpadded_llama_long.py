@@ -585,6 +585,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         rope_scaling_type = config.rope_scaling.get(
             "type", None
         ) or config.rope_scaling.get("rope_type", None)
@@ -592,7 +593,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
             self.rotary_emb = UnpaddedLlamaLinearScalingRotaryEmbedding(
                 config.hidden_size // config.num_attention_heads,
                 max_position_embeddings=2048,
-                base=config.rope_theta,
+                base=rope_theta,
                 scaling_factor=config.rope_scaling["factor"],
             )
         elif rope_scaling_type == "yarn":
@@ -603,7 +604,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
                 original_max_position_embeddings=config.rope_scaling[
                     "original_max_position_embeddings"
                 ],
-                base=config.rope_theta,
+                base=rope_theta,
             )
         elif rope_scaling_type == "llama3":
             self.rotary_emb = UnpaddedLlama3RotaryEmbedding(
@@ -615,7 +616,7 @@ class UnpaddedLlamaModel(UnpaddedLlamaPreTrainedModel):
                 original_max_position_embeddings=config.rope_scaling[
                     "original_max_position_embeddings"
                 ],
-                base=config.rope_theta,
+                base=rope_theta,
             )
 
         self.layers = nn.ModuleList(

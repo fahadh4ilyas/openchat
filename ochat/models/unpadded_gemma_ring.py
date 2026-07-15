@@ -370,7 +370,7 @@ class UnpaddedGemmaModel(UnpaddedGemmaPreTrainedModel):
             config.vocab_size, config.hidden_size, self.padding_idx
         )
         self.rotary_emb = UnpaddedGemmaRotaryEmbedding(
-            config.head_dim, max_position_embeddings=2048, base=config.rope_theta
+            config.head_dim, max_position_embeddings=2048, base=config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         )
 
         self.layers = nn.ModuleList(

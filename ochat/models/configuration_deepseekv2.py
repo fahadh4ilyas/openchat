@@ -152,10 +152,13 @@ class DeepseekV2Config(PretrainedConfig):
         tie_word_embeddings=False,
         rope_theta=10000.0,
         rope_scaling=None,
+        rope_parameters=None,
         attention_bias=False,
         attention_dropout=0.0,
         **kwargs,
     ):
+        if rope_parameters is not None:
+            rope_theta = rope_parameters.get("rope_theta", rope_theta)
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
@@ -194,6 +197,7 @@ class DeepseekV2Config(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
+        self.rope_parameters = rope_parameters
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
 

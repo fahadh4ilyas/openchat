@@ -133,12 +133,15 @@ class PhiConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_theta=10000.0,
         rope_scaling=None,
+        rope_parameters=None,
         partial_rotary_factor=0.5,
         qk_layernorm=False,
         bos_token_id=1,
         eos_token_id=2,
         **kwargs,
     ):
+        if rope_parameters is not None:
+            rope_theta = rope_parameters.get("rope_theta", rope_theta)
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
@@ -159,6 +162,7 @@ class PhiConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
+        self.rope_parameters = rope_parameters
         self.partial_rotary_factor = partial_rotary_factor
         self.qk_layernorm = qk_layernorm
         self._rope_scaling_validation()
@@ -178,12 +182,18 @@ class PhiConfig(PretrainedConfig):
         if self.rope_scaling is None:
             return
 
-        if not isinstance(self.rope_scaling, dict) or len(self.rope_scaling) != 2:
+        if not isinstance(self.rope_scaling, dict):
             raise ValueError(
-                "`rope_scaling` must be a dictionary with with two fields, `type` and `factor`, "
+                "`rope_scaling` must be a dictionary, "
                 f"got {self.rope_scaling}"
             )
-        rope_scaling_type = self.rope_scaling.get("type", None)
+        rope_scaling_type = self.rope_scaling.get(
+            "type", None
+        ) or self.rope_scaling.get("rope_type", None)
+        # "default" and "llama3" are valid non-scaling rope_types from newer transformers;
+        # also return if no scaling factor is present (pure rope_parameters without scaling)
+        if rope_scaling_type in ("default", "llama3") or "factor" not in self.rope_scaling:
+            return
         rope_scaling_factor = self.rope_scaling.get("factor", None)
         if rope_scaling_type is None or rope_scaling_type not in ["linear", "dynamic"]:
             raise ValueError(

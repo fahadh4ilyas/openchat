@@ -432,7 +432,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                     // config.num_attention_heads
                 ),
                 max_position_embeddings=config.max_position_embeddings,
-                base=config.rope_theta,
+                base=config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"],
             )
         elif config.rope_scaling["type"] == "linear":
             self.rotary_emb = UnpaddedPhiLinearScalingRotaryEmbedding(
@@ -442,7 +442,7 @@ class UnpaddedPhiModel(UnpaddedPhiPreTrainedModel):
                     // config.num_attention_heads
                 ),
                 max_position_embeddings=config.max_position_embeddings,
-                base=config.rope_theta,
+                base=config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"],
                 scaling_factor=config.rope_scaling["factor"],
             )
         self.layers = nn.ModuleList(

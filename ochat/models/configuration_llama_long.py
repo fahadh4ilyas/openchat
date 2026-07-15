@@ -134,11 +134,14 @@ class LlamaConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_theta=10000.0,
         rope_scaling=None,
+        rope_parameters=None,
         attention_bias=False,
         attention_dropout=0.0,
         mlp_bias=False,
         **kwargs,
     ):
+        if rope_parameters is not None:
+            rope_theta = rope_parameters.get("rope_theta", rope_theta)
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
@@ -158,6 +161,7 @@ class LlamaConfig(PretrainedConfig):
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
+        self.rope_parameters = rope_parameters
         self._rope_scaling_validation()
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
@@ -185,13 +189,16 @@ class LlamaConfig(PretrainedConfig):
         rope_scaling_type = self.rope_scaling.get(
             "type", None
         ) or self.rope_scaling.get("rope_type", None)
+        # "default" and "llama3" are valid non-scaling rope_types from newer transformers;
+        # also return if no scaling factor is present (pure rope_parameters without scaling)
+        if rope_scaling_type in ("default", "llama3") or "factor" not in self.rope_scaling:
+            return
         rope_scaling_factor = self.rope_scaling.get("factor", None)
         if rope_scaling_type is None or rope_scaling_type not in [
             "linear",
             "dynamic",
             "yarn",
             "dynamic-yarn",
-            "llama3",
         ]:
             raise ValueError(
                 f"`rope_scaling`'s name field must be one of ['linear', 'dynamic', 'yarn', 'dynamic-yarn'], got {rope_scaling_type}"

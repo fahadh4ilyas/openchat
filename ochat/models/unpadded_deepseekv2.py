@@ -546,7 +546,7 @@ class UnpaddedDeepseekV2Attention(nn.Module):
         self.num_heads = config.num_attention_heads
 
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
+        self.rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         self.q_lora_rank = config.q_lora_rank
         self.qk_rope_head_dim = config.qk_rope_head_dim
         self.kv_lora_rank = config.kv_lora_rank
@@ -778,11 +778,12 @@ class UnpaddedDeepseekV2Model(UnpaddedDeepseekV2PreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         if self.config.rope_scaling is None:
             self.rotary_emb = UnpaddedDeepseekV2RotaryEmbedding(
                 config.qk_rope_head_dim,
                 max_position_embeddings=2048,
-                base=config.rope_theta,
+                base=rope_theta,
             )
         else:
             scaling_type = self.config.rope_scaling["type"]
@@ -803,7 +804,7 @@ class UnpaddedDeepseekV2Model(UnpaddedDeepseekV2PreTrainedModel):
                     config.qk_rope_head_dim,
                     max_position_embeddings=2048,
                     scaling_factor=scaling_factor,
-                    base=config.rope_theta,
+                    base=rope_theta,
                     **kwargs,
                 )
             else:

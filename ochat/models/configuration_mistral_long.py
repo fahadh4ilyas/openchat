@@ -124,10 +124,13 @@ class MistralConfig(PretrainedConfig):
         tie_word_embeddings=False,
         rope_scaling=None,
         rope_theta=10000.0,
+        rope_parameters=None,
         sliding_window=4096,
         attention_dropout=0.0,
         **kwargs,
     ):
+        if rope_parameters is not None:
+            rope_theta = rope_parameters.get("rope_theta", rope_theta)
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.hidden_size = hidden_size
@@ -148,6 +151,7 @@ class MistralConfig(PretrainedConfig):
         self.rope_scaling = rope_scaling
         self._rope_scaling_validation()
         self.rope_theta = rope_theta
+        self.rope_parameters = rope_parameters
         self.attention_dropout = attention_dropout
 
         super().__init__(
@@ -169,7 +173,11 @@ class MistralConfig(PretrainedConfig):
             raise ValueError(
                 "`rope_scaling` must be a dictionary, " f"got {self.rope_scaling}"
             )
-        rope_scaling_type = self.rope_scaling.get("type", None)
+        rope_scaling_type = self.rope_scaling.get("type", None) or self.rope_scaling.get("rope_type", None)
+        # "default" and "llama3" are valid non-scaling rope_types from newer transformers;
+        # also return if no scaling factor is present (pure rope_parameters without scaling)
+        if rope_scaling_type in ("default", "llama3") or "factor" not in self.rope_scaling:
+            return
         rope_scaling_factor = self.rope_scaling.get("factor", None)
         if rope_scaling_type is None or rope_scaling_type not in [
             "linear",

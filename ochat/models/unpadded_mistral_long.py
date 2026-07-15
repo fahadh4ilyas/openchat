@@ -511,11 +511,12 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
+        rope_theta = config.rope_theta if hasattr(config, "rope_theta") else config.rope_parameters["rope_theta"]
         if config.rope_scaling["type"] == "linear":
             self.rotary_emb = UnpaddedMistralLinearScalingRotaryEmbedding(
                 config.hidden_size // config.num_attention_heads,
                 max_position_embeddings=2048,
-                base=config.rope_theta,
+                base=rope_theta,
                 scaling_factor=config.rope_scaling["factor"],
             )
         elif config.rope_scaling["type"] == "yarn":
@@ -526,7 +527,7 @@ class UnpaddedMistralModel(UnpaddedMistralPreTrainedModel):
                 original_max_position_embeddings=config.rope_scaling[
                     "original_max_position_embeddings"
                 ],
-                base=config.rope_theta,
+                base=rope_theta,
             )
 
         self.layers = nn.ModuleList(
