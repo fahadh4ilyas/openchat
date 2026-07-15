@@ -14,7 +14,7 @@ from functools import partial
 from transformers import ProcessorMixin
 
 from ochat.config import MODEL_CONFIG_MAP
-from ochat.training_deepspeed.numpy_dataset import NumpyDataset
+from ochat.training_sft.numpy_dataset import NumpyDataset
 
 
 PAD_ID = 0

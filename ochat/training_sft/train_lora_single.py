@@ -13,7 +13,7 @@ import mlflow
 from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
 
 from ochat.config import MODEL_CONFIG_MAP
-from ochat.training_deepspeed.utils import (
+from ochat.training_sft.utils import (
     mlflow_stopper_wrapper,
     batch_to_tensor,
     get_latest_checkpoint,
@@ -25,8 +25,8 @@ from ochat.training_deepspeed.utils import (
     save_tokenizer,
     load_tokenizer, 
 )
-from ochat.training_deepspeed.multipack_dataloader_single import MultipackDataloader
-from ochat.training_deepspeed.numpy_dataset import NumpyDataset
+from ochat.training_sft.multipack_dataloader_single import MultipackDataloader
+from ochat.training_sft.numpy_dataset import NumpyDataset
 
 from transformers import BitsAndBytesConfig
 
