@@ -218,7 +218,7 @@ Other hyperparameters have been carefully selected as the default. Furthermore, 
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model_path BASE_REPO \
           --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
           --save_path PATH_TO_SAVE_MODEL \
@@ -226,10 +226,10 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
           --epochs 5 \
           --save_every 1 \
           --deepspeed \
-          --deepspeed_config ochat/training_deepspeed/deepspeed_config.json
+          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> Change `ochat.training_deepspeed.train` to `ochat.training_deepspeed.train_offload` if you want to use deepspeed ZERO offloading
+> Change `ochat.training_sft.train` to `ochat.training_sft.train_offload` if you want to use deepspeed ZERO offloading
 
 </details>
 
@@ -240,7 +240,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model_path BASE_REPO \
           --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
           --save_path PATH_TO_SAVE_MODEL \
@@ -252,10 +252,10 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_deepspeed.train \
           --lora_r 32 \
           --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
           --deepspeed \
-          --deepspeed_config ochat/training_deepspeed/deepspeed_config.json
+          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> Change `ochat.training_deepspeed.train` to `ochat.training_deepspeed.train_offload` if you want to use deepspeed ZERO offloading
+> Change `ochat.training_sft.train` to `ochat.training_sft.train_offload` if you want to use deepspeed ZERO offloading
 
 </details>
 

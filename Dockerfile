@@ -28,4 +28,4 @@ WORKDIR /openchat-workspace
 
 RUN rm -rf /openchat
 
-COPY ochat/training_deepspeed/deepspeed* /openchat-workspace/config/
+COPY ochat/deepspeed_config/deepspeed* /openchat-workspace/config/
