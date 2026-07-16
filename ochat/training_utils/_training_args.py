@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator as validator
 class BaseTrainingArguments(BaseModel):
     """Arguments shared by all training modes (full, LoRA, ring, etc.)."""
 
-    local_rank: int = Field(...)
+    local_rank: Optional[int] = Field(None)
     model_path: str = Field(...)
     model_type: Optional[str] = Field(None)
     has_processor: Optional[bool] = Field(None)
@@ -48,8 +48,8 @@ class BaseTrainingArguments(BaseModel):
     run_name: str = Field(...)
     deepscale: bool = Field(False)
     deepscale_config: Optional[str] = Field(None)
-    deepspeed: bool = Field(True)
-    deepspeed_config: Union[str, dict] = Field(...)
+    deepspeed: bool = Field(False)
+    deepspeed_config: Optional[Union[str, dict]] = Field(None)
     deepspeed_mpi: bool = Field(False)
     ds_offload: bool = Field(False)
     ds_zero_op: int = Field(0)
@@ -82,7 +82,7 @@ class LoraTrainingArgsMixin(BaseModel):
 
 def add_base_args(parser: argparse.ArgumentParser, base_lr: float = 3e-4):
     """Add common training arguments to an argparse parser."""
-    parser.add_argument("--local_rank", type=int, required=True)
+    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--model_path", type=str, required=True)
     parser.add_argument("--data_prefix", type=str, required=True)
     parser.add_argument("--save_path", type=str, required=True)

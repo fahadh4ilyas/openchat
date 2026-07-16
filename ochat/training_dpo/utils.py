@@ -128,7 +128,12 @@ def batch_to_tensor(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = 
         batch_tensor["max_seqlen"] = torch.max(batch_tensor["seqlens"]).item()
         del batch_tensor["seqlens"]
 
-    return batch_tensor
+    # Move max_seqlen out of tensor dict (it's an int, placed in batch_info by collate funcs)
+    batch_info = {}
+    if "max_seqlen" in batch_tensor:
+        batch_info["max_seqlen"] = batch_tensor.pop("max_seqlen")
+
+    return batch_tensor, batch_info
 
 
 def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = None,
@@ -142,8 +147,8 @@ def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] 
         rejected_ref_logps: tensor of pre-computed reference log-probs for rejected.
         batch_info: dict with combined max_seqlen and total_seqs.
     """
-    chosen_tensor = batch_to_tensor(batch, dataset_path, processor, prefix="chosen_")
-    rejected_tensor = batch_to_tensor(batch, dataset_path, processor, prefix="rejected_")
+    chosen_tensor, chosen_info = batch_to_tensor(batch, dataset_path, processor, prefix="chosen_")
+    rejected_tensor, rejected_info = batch_to_tensor(batch, dataset_path, processor, prefix="rejected_")
 
     # Reference log-probs (pre-computed scalars per example)
     chosen_ref_logps = torch.from_numpy(np.concatenate(batch["chosen_ref_logp"], axis=0)).to(torch.float32)
@@ -152,8 +157,8 @@ def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] 
     # Combined batch info
     batch_info = {
         "max_seqlen": max(
-            chosen_tensor.get("max_seqlen", 0),
-            rejected_tensor.get("max_seqlen", 0),
+            chosen_info.get("max_seqlen", 0),
+            rejected_info.get("max_seqlen", 0),
         ),
     }
 
@@ -249,7 +254,10 @@ def calculate_auto_lr(base_lr: float, lr: Optional[float], batch_max_len: int, m
     if any([x in model_type.lower() for x in MODEL_LR]):
         base_lr /= 6.0
 
-    loss_weights = np.concatenate([train_dataset["chosen_nz_shifted_loss_weights"], train_dataset["rejected_nz_shifted_loss_weights"]])
+    loss_weights = np.concatenate([
+        *train_dataset["chosen_nz_shifted_loss_weights"],
+        *train_dataset["rejected_nz_shifted_loss_weights"],
+    ])
     supervised_ratio = np.sum(loss_weights != 0) / len(loss_weights)
 
     world_size = dist.get_world_size() if dist.is_initialized() else 1

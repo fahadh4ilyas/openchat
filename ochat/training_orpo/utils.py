@@ -89,13 +89,13 @@ def orpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str]
 
     ORPO uses the same paired data format as DPO but ignores ref_logp fields.
     """
-    chosen_tensor = batch_to_tensor(batch, dataset_path, processor, prefix="chosen_")
-    rejected_tensor = batch_to_tensor(batch, dataset_path, processor, prefix="rejected_")
+    chosen_tensor, chosen_info = batch_to_tensor(batch, dataset_path, processor, prefix="chosen_")
+    rejected_tensor, rejected_info = batch_to_tensor(batch, dataset_path, processor, prefix="rejected_")
 
     batch_info = {
         "max_seqlen": max(
-            chosen_tensor.get("max_seqlen", 0),
-            rejected_tensor.get("max_seqlen", 0),
+            chosen_info.get("max_seqlen", 0),
+            rejected_info.get("max_seqlen", 0),
         ),
     }
 

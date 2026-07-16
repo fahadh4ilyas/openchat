@@ -253,8 +253,8 @@ def train(args):
                 continue
 
             # Move to device
-            chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-            rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+            chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+            rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
             # Forward both sides
             loss_chosen, chosen_logp = _forward_and_logp_ring(model_engine, chosen_t, batch_info, args, total_seqs)
@@ -309,8 +309,8 @@ def train(args):
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
                     for (chosen_t, rejected_t, batch_info), total_seqs in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
                         loss_chosen, chosen_logp = _forward_and_logp_ring(model_engine, chosen_t, batch_info, args, total_seqs)
                         _, rejected_logp = _forward_and_logp_ring(model_engine, rejected_t, batch_info, args, total_seqs)
@@ -351,8 +351,8 @@ def train(args):
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
                     for (chosen_t, rejected_t, batch_info), total_seqs in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
                         loss_chosen, chosen_logp = _forward_and_logp_ring(model_engine, chosen_t, batch_info, args, total_seqs)
                         _, rejected_logp = _forward_and_logp_ring(model_engine, rejected_t, batch_info, args, total_seqs)

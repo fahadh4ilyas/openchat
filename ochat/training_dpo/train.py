@@ -262,8 +262,8 @@ def train(args):
                 continue
 
             # Move to device
-            chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-            rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+            chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+            rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
             # Reference log-probs: precomputed in dataset, or online via frozen base model
             if ref_logps_precomputed:
@@ -324,8 +324,8 @@ def train(args):
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
                     for (chosen_t, rejected_t, chosen_ref, rejected_ref, batch_info), all_numseq, cur_numseq in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
                         if ref_logps_precomputed:
                             chosen_ref = chosen_ref.to(args.device)
@@ -375,8 +375,8 @@ def train(args):
                 eval_loader.set_epoch(eval_epoch)
                 with torch.inference_mode():
                     for (chosen_t, rejected_t, chosen_ref, rejected_ref, batch_info), all_numseq, cur_numseq in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if v is not None else None) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if v is not None else None) for k, v in rejected_t.items()}
+                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
                         if ref_logps_precomputed:
                             chosen_ref = chosen_ref.to(args.device)
