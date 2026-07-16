@@ -9,7 +9,7 @@ import os
 from functools import partial
 from typing import Optional, Union, Literal
 
-from pydantic import BaseModel, Field, field_validator as validator
+from pydantic import Field, field_validator as validator
 
 import torch
 
@@ -37,7 +37,7 @@ from ochat.training_utils.multipack_dataloader_single import MultipackDataloader
 from ochat.training_utils.numpy_dataset import NumpyDataset
 
 
-class TrainingArguments(BaseModel, LoraTrainingArgsMixin):
+class TrainingArguments(LoraTrainingArgsMixin):
     """Single-GPU SFT training arguments. LoRA fields are ignored when --use_lora is not set."""
 
     model_path: str = Field(...)

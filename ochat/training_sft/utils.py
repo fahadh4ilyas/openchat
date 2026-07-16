@@ -192,7 +192,8 @@ def calculate_auto_lr(
     loss_weights = np.concatenate(train_dataset["nz_shifted_loss_weights"])
     supervised_ratio = np.sum(loss_weights != 0) / len(loss_weights)
 
-    supervised_tokens = batch_max_len * dist.get_world_size() * supervised_ratio
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    supervised_tokens = batch_max_len * world_size * supervised_ratio
     lr = base_lr * math.sqrt(supervised_tokens / base_bs)
 
     print(

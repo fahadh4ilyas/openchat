@@ -65,6 +65,7 @@ class BaseTrainingArguments(BaseModel):
 class LoraTrainingArgsMixin(BaseModel):
     """LoRA-specific arguments. Mix into TrainingArguments classes."""
 
+    use_lora: bool = Field(False)
     lora_alpha: int = Field(32)
     lora_r: int = Field(32)
     lora_dropout: float = Field(0.05)
@@ -117,6 +118,7 @@ def add_base_args(parser: argparse.ArgumentParser, base_lr: float = 3e-4):
 
 def add_lora_args(parser: argparse.ArgumentParser):
     """Add LoRA-specific arguments to an argparse parser."""
+    parser.add_argument("--use_lora", action="store_true")
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_r", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
