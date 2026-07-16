@@ -25,7 +25,7 @@ def make_dict(dataset_filename: str) -> Dict[str, Any]:
         k: v.to_numpy() for k, v in zip(table.column_names, table.columns)
     }
     final_data['length'] = table.num_rows
-    final_data['metadata'] = table.schema.metadata.get(b"metadata_json", None)
+    final_data['metadata'] = (table.schema.metadata or {}).get(b"metadata_json", None)
     if final_data['metadata'] is not None:
         final_data['metadata'] = orjson.loads(final_data['metadata'])
     
