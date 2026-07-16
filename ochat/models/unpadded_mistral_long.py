@@ -43,14 +43,14 @@ from ochat.kernel.rope import fast_rope_embedding
 logger = logging.get_logger(__name__)
 
 
-@torch.jit.script  # type: ignore
+@torch.compile  # type: ignore
 def weighted_token_accuracy(
     logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
 ):
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-# @torch.jit.script  # type: ignore
+# @torch.compile  # type: ignore
 def weighted_cross_entropy(
     logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
 ):
@@ -59,7 +59,7 @@ def weighted_cross_entropy(
     ).sum()
 
 
-@torch.jit.script  # type: ignore
+@torch.compile  # type: ignore
 def rms_norm(
     hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
 ):

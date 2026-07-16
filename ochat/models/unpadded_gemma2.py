@@ -49,7 +49,7 @@ def weighted_token_accuracy(
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-# @torch.jit.script  # type: ignore
+# @torch.compile  # type: ignore
 def weighted_cross_entropy(
     logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
 ):
@@ -58,7 +58,7 @@ def weighted_cross_entropy(
     ).sum()
 
 
-@torch.jit.script  # type: ignore
+@torch.compile  # type: ignore
 def rms_norm(
     hidden_states: torch.Tensor, weight: torch.Tensor, variance_epsilon: float
 ):
