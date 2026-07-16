@@ -126,6 +126,47 @@ pip3 install -e .
 
 The OpenChat training system utilizes padding-free training and the [Multipack Sampler](https://github.com/imoneoi/multipack_sampler), achieving a **3~10x** speedup compared to the conventional padded training.
 
+### Code Organization
+
+```
+ochat/
+├── config/              # Model configs, conversation templates
+├── models/              # Unpadded model implementations
+├── training_utils/      # Shared training infrastructure
+│   ├── _training_args.py       # BaseTrainingArguments, LoraTrainingArgsMixin
+│   ├── numpy_dataset.py        # NumpyDataset (shared by SFT/DPO/ORPO)
+│   ├── multipack_dataloader.py # Base distributed dataloader
+│   ├── multipack_dataloader_ring.py  # Base ring-attention dataloader
+│   ├── multipack_dataloader_ring_dpo.py  # DPO/ORPO ring dataloader (chosen_/rejected_ keys)
+│   └── multipack_dataloader_single.py   # Single-GPU dataloader
+├── training_sft/        # SFT/C-RLFT training (train, train_ring, train_single, utils)
+├── training_dpo/        # DPO training (train, train_ring, train_single, utils)
+├── training_orpo/       # ORPO training (train, train_ring, train_single, utils)
+├── data/                # Dataset preprocessing (tokenize → Arrow/Parquet)
+├── kernel/              # Custom CUDA kernels
+├── deepspeed_config/    # DeepSpeed ZERO stage JSON configs
+├── scripts/             # Utility scripts
+└── tests/               # pytest tests (CPU markers)
+```
+
+### Supported Model Families
+
+OpenChat supports a wide range of base model architectures. Each family has variants for long context (`Long`), ring attention (`Ring`), tensor-parallel split (`Split`), mixture-of-experts (`Moe`), and ChatML / DeepSeek / Instruct conversation templates.
+
+| Family | Model Types (partial) | Conversation Templates |
+|---|---|---|
+| **Llama** | `llama`, `llama3`, `llama3.1` | V3.2 (`<\|end_of_turn\|>`), ChatML |
+| **Mistral** | `mistral`, `mixtral` (MoE) | V3.2, ChatML |
+| **Qwen 2** | `qwen2` | V3.2, ChatML, DeepSeek |
+| **Qwen 3** | `qwen3`, `qwen3Moe` | V3.2, ChatML, DeepSeek |
+| **Qwen 3.5** | `qwen3_5`, `qwen3_5Moe` | ChatML |
+| **Gemma** | `gemma`, `gemma2` | V3.2, ChatML, Instruct |
+| **Phi** | `phi`, `phi_ori` | V3.2, ChatML |
+| **DeepSeek V2** | `deepseekv2` | DeepSeek |
+| **Zephyr** | `zephyr` | Zephyr |
+
+> Append `_chatml` (e.g. `mistral_chatml`) for ChatML-format models. Append `Ring` for ring-attention variants (e.g. `llamaRing`). The full registry is in `ochat/config/__init__.py`.
+
 ## Choose a base model
 
 OpenChat supports Llama 2 and Mistral models. Please first choose a base model to fit your needs. Each base model has a corresponding weight repo, model type, and recommended batch size as listed below, they should be filled into `BASE_REPO`, `MODEL_TYPE`, and `BATCH_SIZE` in the following instructions.
@@ -196,15 +237,78 @@ C-RLFT example:
 {"items":[{"role":"user","content":"What is C-RLFT?","weight":0.0},{"role":"assistant","content":"I don't know.","weight":0.1}],"condition":"GPT3","system":""}
 ```
 
+#### Converting from OpenAI Format
+
+If your data is in the OpenAI chat-completions format (list of `messages` with `role`/`content`), use the conversion tools to transform it into OpenChat `Conversation` objects. These tools round-trip through the model's tokenizer to correctly handle thinking blocks, tool calls, and other template-specific transformations.
+
+**SFT conversion** — one `ConversationOpenAI` per line:
+
+```bash
+python -m ochat.data.convert_dataset \
+    --model-type MODEL_TYPE_chatml \
+    --model-path BASE_REPO \
+    --in-files openai_data.jsonl \
+    --out-file openchat_data.jsonl
+```
+
+**DPO conversion** — `{"chosen": <ConversationOpenAI>, "rejected": <ConversationOpenAI>}` per line:
+
+```bash
+python -m ochat.data.convert_dataset_dpo \
+    --model-type MODEL_TYPE_chatml \
+    --model-path BASE_REPO \
+    --in-files openai_dpo_data.jsonl \
+    --out-file openchat_dpo_data.jsonl
+```
+
+> Both converters require a `chatml` model type (e.g. `qwen3_5_chatml`). Multi-turn conversations are split at each weighted assistant turn. The DPO converter aligns chosen/rejected non-assistant messages and takes the union of turn positions. Use `--max-workers` to control parallelism.
+
 ### Pre-tokenizing the Dataset
 
 You'll then need to pre-tokenize the dataset using the command (please specify a filename as `PRETOKENIZED_DATA_OUTPUT_PATH` to store the pretokenized dataset):
 
+**SFT:**
+
 ```bash
-python -m ochat.data.generate_dataset --model-type MODEL_TYPE --model-path BASE_REPO --in-files data.jsonl --out-prefix PRETOKENIZED_DATA_OUTPUT_PATH
+python -m ochat.data.generate_dataset \
+    --model-type MODEL_TYPE \
+    --model-path BASE_REPO \
+    --in-files data.jsonl \
+    --out-prefix PRETOKENIZED_DATA_OUTPUT_PATH
 ```
 
-### Launching the OpenChat Trainer
+**DPO:**
+
+```bash
+python -m ochat.data.generate_dpo_dataset \
+    --model-type MODEL_TYPE \
+    --model-path BASE_REPO \
+    --in-files data_dpo.jsonl \
+    --out-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH
+```
+
+Key flags for both commands:
+
+| Flag | Description |
+|---|---|
+| `--max-seq-length N` | Truncate sequences longer than N tokens |
+| `--eval-ratio R` | Fraction of data held out for evaluation (0.0–1.0) |
+| `--per-sequence-loss` | Normalize loss per sequence instead of per token |
+| `--force-eos-token` | Append EOS token at end of each sequence |
+| `--separate-think` | Separate `&lt;think&gt;` blocks when tokenizing (DeepSeek/Qwen) |
+| `--seed N` | Random seed for train/eval split (default 42) |
+| `--max-workers N` | Number of parallel worker processes |
+| `--max-jobs N` | Number of parallel batches per worker |
+
+DPO-specific:
+
+| Flag | Description |
+|---|---|
+| `--no-ref-logps` | Skip reference log-prob computation (training computes online) |
+
+Output files are written as `.parquet` (or `.pickle`) to `PRETOKENIZED_DATA_OUTPUT_PATH.train.parquet` and optionally `.eval.parquet`.
+
+### Training
 
 You can now launch the OpenChat trainer using the command below. Training a 13B model requires eight A/H100s with 80GB VRAM, while a 7B model can be trained with four A/H100s with 80GB VRAM or eight A/H100s with 40GB VRAM.
 
@@ -218,6 +322,7 @@ Other hyperparameters have been carefully selected as the default. Furthermore, 
 ```bash
 NUM_GPUS=8
 
+# Full fine-tuning
 deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model_path BASE_REPO \
           --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
@@ -227,19 +332,8 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --save_every 1 \
           --deepspeed \
           --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
-```
 
-> Change `ochat.training_sft.train` to `ochat.training_sft.train_offload` if you want to use deepspeed ZERO offloading
-
-</details>
-
-<details>
-
-<summary>Training Commands LORA (click to expand)</summary>
-
-```bash
-NUM_GPUS=8
-
+# LoRA fine-tuning (same script, add --use_lora)
 deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model_path BASE_REPO \
           --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
@@ -255,11 +349,141 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> Change `ochat.training_sft.train` to `ochat.training_sft.train_offload` if you want to use deepspeed ZERO offloading
+> Change `ochat.training_sft.train` to `ochat.training_sft.train_ring` for ring attention. Add `--use_qlora` for QLoRA. For ZERO offloading use `train_offload`.
 
 </details>
 
 You can find checkpoints of all epochs in `PATH_TO_SAVE_MODEL`. Then you may evaluate each epoch and choose the best one.
+
+#### DPO Training
+
+DPO training is LoRA/QLoRA only. The frozen base model serves as the reference — no separate model copy is needed. Data format and pre-tokenization are covered above.
+
+```bash
+NUM_GPUS=8
+
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 \
+    --save_every 1 \
+    --dpo_beta 0.1 \
+    --use_lora \
+    --lora_r 32 \
+    --lora_alpha 32 \
+    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+    --deepspeed \
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+```
+
+> DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT. `base_lr` defaults to `1e-2`.
+
+#### ORPO Training (Odds Ratio Preference Optimization)
+
+ORPO combines SFT and preference alignment in a single objective — no reference model needed. Supports both full fine-tuning and LoRA/QLoRA. Uses the same paired data format as DPO.
+
+```bash
+NUM_GPUS=8
+
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_orpo.train \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 \
+    --save_every 1 \
+    --orpo_beta 0.1 \
+    --deepspeed \
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+```
+
+For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+
+Pre-tokenize data with (no reference log-probs needed):
+
+```bash
+python -m ochat.data.generate_orpo_dataset \
+    --model-type MODEL_TYPE \
+    --model-path BASE_REPO \
+    --in-files data_orpo.jsonl \
+    --out-prefix PRETOKENIZED_ORPO_DATA_OUTPUT_PATH
+```
+
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--orpo_beta` (λ in the paper, default 0.1) controls the odds-ratio penalty weight. Supports all standard checkpointing, eval, and MLflow flags.
+
+#### Ring Attention for Long Context
+
+Ring attention distributes sequence computation across GPUs, enabling context lengths up to 2¹⁹ tokens. Add `--use_ring` to any training command:
+
+```bash
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
+    --use_ring \
+    ... other flags ...
+```
+
+Ring-attention model types (e.g. `llamaRing`, `qwen3_5_chatml` + `--use_ring`) automatically use the ring-attention dataloader and forward pass. This works with both SFT and DPO training.
+
+#### Training Flags Reference
+
+Common flags across all training modes:
+
+| Flag | Default | Description |
+|---|---|---|
+| **Model & Data** |||
+| `--model_path` | *required* | Base model HuggingFace repo or local path |
+| `--model_type` | auto | Model type from registry (auto-detected from pretokenized data) |
+| `--data_prefix` | *required* | Path prefix to pretokenized `.parquet` files |
+| `--save_path` | *required* | Directory for checkpoints and final model |
+| **Training** |||
+| `--batch_max_len` | 81920 | Total tokens per batch (must be multiple of 2048) |
+| `--epochs` | 5 | Number of training epochs |
+| `--max_steps` | 0 | Override epochs with exact step count (0 = disabled) |
+| `--base_lr` | 3e-4 / 1e-2 | Base LR (3e-4 full FT, 1e-2 LoRA). Auto-scaled unless `--lr` is set |
+| `--lr` | auto | Explicit learning rate (disables auto-estimation) |
+| `--lr_warmup_ratio` | 0.05 | Fraction of steps for LR warmup |
+| `--lr_min_ratio` | 0.1 | Minimum LR as fraction of peak (cosine decay endpoint) |
+| **Checkpointing** |||
+| `--save_strategy` | epoch | `epoch` or `step` |
+| `--save_every` | *required* | Save interval in epochs or steps |
+| `--checkpoint_every` | 0 | Additional checkpoint interval in steps (0 = off) |
+| `--max_checkpoint` | 1 | Keep at most N recent checkpoints |
+| **Evaluation** |||
+| `--eval_strategy` | epoch | `epoch` or `step` |
+| `--eval_every` | *required* | Eval interval in epochs or steps |
+| **LoRA / QLoRA** |||
+| `--use_lora` | false | Enable LoRA fine-tuning |
+| `--use_qlora` | false | Enable QLoRA (4-bit or 8-bit quantization) |
+| `--lora_r` | 32 | LoRA rank |
+| `--lora_alpha` | 32 | LoRA scaling factor |
+| `--lora_target_modules` | `q_proj k_proj v_proj o_proj` | Modules to apply LoRA to |
+| `--quant_bits` | 4 | QLoRA quantization bits (4 or 8) |
+| **Performance** |||
+| `--use_ring` | false | Enable ring attention for long-context training |
+| `--chunk_size` | -1 | Chunk size for gradient checkpointing (-1 = auto) |
+| `--use_fast_norm` | false | Use custom CUDA RMS norm kernel |
+| `--use_fast_rope` | false | Use custom CUDA RoPE kernel |
+| `--deepspeed` | true | Enable DeepSpeed (required) |
+| `--deepspeed_config` | *required* | Path to DeepSpeed JSON config |
+| **MLflow** |||
+| `--experiment_name` | *required* | MLflow experiment name |
+| `--run_name` | *required* | MLflow run name |
+| `--tracking_uri` | none | MLflow tracking server URI |
+
+DPO-specific:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dpo_beta` | 0.1 | DPO temperature; higher = closer to reference |
+
+ORPO-specific:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--orpo_beta` | 0.1 | ORPO odds-ratio penalty weight (λ in the paper) |
+
+> For DeepSpeed ZERO offloading, use `ochat.training_sft.train_offload` as the module and set `"offload_optimizer": true` in the DeepSpeed config.
 
 ## Limitations
 
