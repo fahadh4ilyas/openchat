@@ -14,7 +14,7 @@ from functools import partial
 from transformers import ProcessorMixin
 
 from ochat.config import MODEL_CONFIG_MAP
-from ochat.training_sft.numpy_dataset import NumpyDataset
+from ochat.training_utils.numpy_dataset import NumpyDataset
 
 
 PAD_ID = 0
@@ -27,11 +27,11 @@ BATCH_KEYS = {
 }
 
 
-MODEL_LR = ["mistral", "qwen2", "mixtral"]
+MODEL_LR = ["mistral", "mixtral", "qwen2", "qwen3", "qwen3_5", "gemma", "gemma2", "phi", "deepseekv2"]
 
 
-def _find_multiple(a, b):
-    return (-(a // -b)) * b
+# def _find_multiple(a, b):
+#     return (-(a // -b)) * b
 
 
 def create_dataset(args, split_name: str) -> NumpyDataset:
@@ -205,11 +205,8 @@ def mlflow_stopper_wrapper(is_distributed: bool = True):
     def _wrapper(function):
 
         def mlflow_stopper(args):
-
             try:
                 function(args)
-            except:
-                raise
             finally:
                 if not is_distributed:
                     mlflow.end_run()

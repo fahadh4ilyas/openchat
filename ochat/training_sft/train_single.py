@@ -1,7 +1,13 @@
+"""Single-GPU SFT/C-RLFT training entry point.
+
+Handles full fine-tuning, LoRA, and QLoRA in one script.
+base_lr: 3e-4 (full FT), auto-overridden to 1e-2 (LoRA).
+"""
+
 import argparse
 import os
 from functools import partial
-from typing import Optional, Union, Literal, Tuple
+from typing import Optional, Union, Literal
 
 from pydantic import BaseModel, Field, field_validator as validator
 
@@ -10,7 +16,11 @@ import torch
 import tqdm
 import mlflow
 
+from peft import LoraConfig, get_peft_model, PeftModel, prepare_model_for_kbit_training
+from transformers import BitsAndBytesConfig
+
 from ochat.config import MODEL_CONFIG_MAP
+from ochat.training_utils._training_args import LoraTrainingArgsMixin
 from ochat.training_sft.utils import (
     mlflow_stopper_wrapper,
     batch_to_tensor,
@@ -23,16 +33,13 @@ from ochat.training_sft.utils import (
     save_tokenizer,
     load_tokenizer,
 )
-from ochat.training_sft.multipack_dataloader_single import MultipackDataloader
-from ochat.training_sft.numpy_dataset import NumpyDataset
-
-from ochat.training_sft.train_lora_single import (
-    TrainingArguments as LoraTrainingArguments,
-    train as lora_train,
-)
+from ochat.training_utils.multipack_dataloader_single import MultipackDataloader
+from ochat.training_utils.numpy_dataset import NumpyDataset
 
 
-class TrainingArguments(BaseModel):
+class TrainingArguments(BaseModel, LoraTrainingArgsMixin):
+    """Single-GPU SFT training arguments. LoRA fields are ignored when --use_lora is not set."""
+
     model_path: str = Field(...)
     model_type: Optional[str] = Field(None)
     has_processor: Optional[bool] = Field(None)
@@ -71,102 +78,71 @@ class TrainingArguments(BaseModel):
     def val_batch_size(cls, v: int) -> int:
         if v % 2048 != 0:
             raise ValueError("`batch_max_len` must be multiple of 2048")
-
         return v
 
 
-def parse_args() -> (
-    Tuple[
-        argparse.Namespace, argparse.Namespace, argparse.Namespace
-    ]
-):
-    parser_base = argparse.ArgumentParser(add_help=False)
-    parser_lora_confirm = argparse.ArgumentParser(add_help=False)
-    parser_lora = argparse.ArgumentParser(add_help=False)
+def parse_args():
+    parser = argparse.ArgumentParser()
 
     # Model type and data
-    parser_base.add_argument("--model_path", type=str, required=True)
-    parser_base.add_argument("--data_prefix", type=str, required=True)
-    parser_base.add_argument("--save_path", type=str, required=True)
-    parser_base.add_argument(
-        "--save_strategy", type=str, choices=["epoch", "step"], default="epoch"
-    )
-    parser_base.add_argument("--save_every", type=int, default=None)
-    parser_base.add_argument("--checkpoint_every", type=int, default=0)
-    parser_base.add_argument("--max_checkpoint", type=int, default=1)
-    parser_base.add_argument(
-        "--eval_strategy", type=str, choices=["epoch", "step"], default="epoch"
-    )
-    parser_base.add_argument("--eval_every", type=int, default=None)
+    parser.add_argument("--model_path", type=str, required=True)
+    parser.add_argument("--data_prefix", type=str, required=True)
+    parser.add_argument("--save_path", type=str, required=True)
+    parser.add_argument("--save_strategy", type=str, choices=["epoch", "step"], default="epoch")
+    parser.add_argument("--save_every", type=int, default=None)
+    parser.add_argument("--checkpoint_every", type=int, default=0)
+    parser.add_argument("--max_checkpoint", type=int, default=1)
+    parser.add_argument("--eval_strategy", type=str, choices=["epoch", "step"], default="epoch")
+    parser.add_argument("--eval_every", type=int, default=None)
 
     # Hyperparameters
-    parser_base.add_argument("--batch_max_len", type=int, default=81920)
-    parser_base.add_argument("--epochs", type=int, default=5)
-    parser_base.add_argument("--max_steps", type=int, default=0)
-
-    # Set lr to None to automatically estimate from LLaMA pretraining parameters (e.g. lr ~ sqrt(batch_size))
-    parser_base.add_argument("--base_lr", type=float, default=3e-4)
-    parser_base.add_argument("--lr", type=float, default=None)
-    parser_base.add_argument("--lr_min_ratio", type=float, default=0.1)
-    parser_base.add_argument("--lr_warmup_ratio", type=float, default=0.05)
-    parser_base.add_argument("--lr_warmup_step", type=int, default=0)
-
-    parser_base.add_argument("--weight_decay", type=float, default=0.1)
-
-    parser_base.add_argument("--beta1", type=float, default=0.9)
-    parser_base.add_argument("--beta2", type=float, default=0.95)
-    parser_base.add_argument("--eps", type=float, default=1e-5)
+    parser.add_argument("--batch_max_len", type=int, default=81920)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--max_steps", type=int, default=0)
+    parser.add_argument("--base_lr", type=float, default=3e-4)
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--lr_min_ratio", type=float, default=0.1)
+    parser.add_argument("--lr_warmup_ratio", type=float, default=0.05)
+    parser.add_argument("--lr_warmup_step", type=int, default=0)
+    parser.add_argument("--weight_decay", type=float, default=0.1)
+    parser.add_argument("--beta1", type=float, default=0.9)
+    parser.add_argument("--beta2", type=float, default=0.95)
+    parser.add_argument("--eps", type=float, default=1e-5)
 
     # CHUNKING
-    parser_base.add_argument("--chunk_size", type=int, default=-1)
+    parser.add_argument("--chunk_size", type=int, default=-1)
 
     # FAST FORWARD
-    parser_base.add_argument("--use_fast_norm", action="store_true")
-    parser_base.add_argument("--use_fast_rope", action="store_true")
+    parser.add_argument("--use_fast_norm", action="store_true")
+    parser.add_argument("--use_fast_rope", action="store_true")
 
     # CACHING
-    parser_base.add_argument(
-        "--torch_empty_cache_steps", type=int, default=None
-    )
+    parser.add_argument("--torch_empty_cache_steps", type=int, default=None)
 
     # MLFLOW
-    parser_base.add_argument("--tracking_uri", type=str, default=None)
-    parser_base.add_argument("--mlflow_username", type=str, default=None)
-    parser_base.add_argument("--mlflow_password", type=str, default=None)
-    parser_base.add_argument("--experiment_name", type=str, required=True)
-    parser_base.add_argument("--run_name", type=str, required=True)
+    parser.add_argument("--tracking_uri", type=str, default=None)
+    parser.add_argument("--mlflow_username", type=str, default=None)
+    parser.add_argument("--mlflow_password", type=str, default=None)
+    parser.add_argument("--experiment_name", type=str, required=True)
+    parser.add_argument("--run_name", type=str, required=True)
 
     # LORA
-    parser_lora_confirm.add_argument("--use_lora", action="store_true")
-    parser_lora.add_argument("--lora_alpha", type=int, default=32)
-    parser_lora.add_argument("--lora_r", type=int, default=32)
-    parser_lora.add_argument("--lora_dropout", type=float, default=0.05)
-    parser_lora.add_argument(
-        "--lora_target_modules",
-        type=str,
-        nargs="*",
-        default=["q_proj", "k_proj", "v_proj", "o_proj"],
-    )
-    parser_lora.add_argument("--lora_bias", type=str, default="none")
-    parser_lora.add_argument("--modules_to_save", type=str, nargs="*", default=None)
+    parser.add_argument("--use_lora", action="store_true")
+    parser.add_argument("--lora_alpha", type=int, default=32)
+    parser.add_argument("--lora_r", type=int, default=32)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
+    parser.add_argument("--lora_target_modules", type=str, nargs="*",
+                        default=["q_proj", "k_proj", "v_proj", "o_proj"])
+    parser.add_argument("--lora_bias", type=str, default="none")
+    parser.add_argument("--modules_to_save", type=str, nargs="*", default=None)
 
     # QLORA
-    parser_lora.add_argument("--use_qlora", action="store_true")
-    parser_lora.add_argument("--quant_bits", type=int, default=4)
-    parser_lora.add_argument("--quant_type_4bit", type=str, default="nf4")
-    parser_lora.add_argument("--use_double_quant_4bit", action="store_true")
+    parser.add_argument("--use_qlora", action="store_true")
+    parser.add_argument("--quant_bits", type=int, default=4)
+    parser.add_argument("--quant_type_4bit", type=str, default="nf4")
+    parser.add_argument("--use_double_quant_4bit", action="store_true")
 
-    # Group parser
-    parser_group = argparse.ArgumentParser(
-        parents=[parser_base, parser_lora_confirm, parser_lora]
-    )
-
-    # Parse known args
-    parser_group.parse_args()
-    args_base, _ = parser_base.parse_known_args()
-    args_lora_confirm, _ = parser_lora_confirm.parse_known_args()
-    args_lora, _ = parser_lora.parse_known_args()
-    return args_base, args_lora_confirm, args_lora
+    return parser.parse_args()
 
 
 def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
@@ -174,7 +150,6 @@ def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
     if args.has_processor:
         tokenizer = load_tokenizer(args)
         collate_fn = partial(batch_to_tensor, dataset_path=os.path.dirname(args.data_prefix), processor=tokenizer)
-    # Multipack dataloader
     return MultipackDataloader(
         dataset=data,
         lengths=data["total_length"],
@@ -186,22 +161,51 @@ def create_distributed_dataloader(args: TrainingArguments, data: NumpyDataset):
 
 
 def create_model(args: TrainingArguments):
+    """Load model, optionally wrap with LoRA/QLoRA, return (model, optimizer)."""
     print(f"Loading model {args.model_type} from {args.model_path}...")
 
-    # get checkpoint
     model_path = get_latest_checkpoint(args) or args.model_path
+    is_lora = args.use_lora or args.use_qlora
 
-    # Create model + optimizer + lr scheduler
+    quantization_config = None
+    if args.use_qlora:
+        quantization_config = BitsAndBytesConfig(
+            load_in_8bit=args.quant_bits == 8,
+            load_in_4bit=args.quant_bits == 4,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type=args.quant_type_4bit,
+            bnb_4bit_use_double_quant=args.use_double_quant_4bit,
+        )
+
     model = MODEL_CONFIG_MAP[args.model_type].model_create_for_training(
-        model_path, low_cpu_mem_usage=True
+        model_path if model_path == args.model_path else args.model_path,
+        low_cpu_mem_usage=True,
+        quantization_config=quantization_config,
     )
     model.config.use_cache = False
-    # Model to assigned cuda device
+
+    if is_lora:
+        if args.use_qlora:
+            model = prepare_model_for_kbit_training(model)
+
+        if model_path == args.model_path:
+            lora_config = LoraConfig(
+                r=args.lora_r,
+                lora_alpha=args.lora_alpha,
+                target_modules=args.lora_target_modules,
+                lora_dropout=args.lora_dropout,
+                bias=args.lora_bias,
+                modules_to_save=args.modules_to_save,
+            )
+            model = get_peft_model(model, lora_config)
+        else:
+            model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
+
+        model.enable_input_require_grads()
+
     model = model.to("cuda")
-    # Enable gradient checkpointing
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
 
-    # Optimizer
     optimizer = torch.optim.AdamW(
         [p for p in model.parameters() if p.requires_grad],
         lr=args.lr,
@@ -211,9 +215,7 @@ def create_model(args: TrainingArguments):
         fused=True,
     )
 
-    # Save device location
     args.device = model.device
-
     return model, optimizer
 
 
@@ -229,6 +231,10 @@ def train(args: TrainingArguments):
     # Load model type
     args.model_type = train_dataset.metadata["model_type"]
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
+
+    # Adjust base_lr for LoRA (adapters converge faster)
+    if args.use_lora or args.use_qlora:
+        args.base_lr = 1e-2
 
     # Data Loader
     train_loader = create_distributed_dataloader(args, train_dataset)
@@ -338,10 +344,7 @@ def train(args: TrainingArguments):
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):
                 save_path = os.path.join(args.save_path, f"checkpoint_{step}")
 
-                try:
-                    model.save_pretrained(save_path)  # type: ignore
-                except RuntimeError:
-                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
+                model.save_pretrained(save_path)  # type: ignore
 
                 # Write metadata
                 save_openchat_metadata(args, epoch + 1, step, save_path)
@@ -408,10 +411,7 @@ def train(args: TrainingArguments):
             ):
                 save_path = os.path.join(args.save_path, f"st_{step}")
 
-                try:
-                    model.save_pretrained(save_path)  # type: ignore
-                except RuntimeError:
-                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
+                model.save_pretrained(save_path)  # type: ignore
 
                 # Also save tokenizer from base model
                 save_tokenizer(args, save_path)
@@ -496,10 +496,7 @@ def train(args: TrainingArguments):
             ):
                 save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 
-                try:
-                    model.save_pretrained(save_path)  # type: ignore
-                except RuntimeError:
-                    model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
+                model.save_pretrained(save_path)  # type: ignore
 
                 # Also save tokenizer from base model
                 save_tokenizer(args, save_path)
@@ -511,10 +508,7 @@ def train(args: TrainingArguments):
 
     save_path = args.save_path
 
-    try:
-        model.save_pretrained(save_path)  # type: ignore
-    except RuntimeError:
-        model.save_pretrained(save_path, safe_serialization=False)  # type: ignore
+    model.save_pretrained(save_path)  # type: ignore
 
     # Also save tokenizer from base model
     save_tokenizer(args, save_path)
@@ -526,11 +520,6 @@ def train(args: TrainingArguments):
 
 
 if __name__ == "__main__":
-    args, args_lora_confirm, args_lora = parse_args()
+    args = parse_args()
     args = TrainingArguments(**vars(args))
-    if args_lora_confirm.use_lora or args_lora.use_qlora:
-        args = {**args.model_dump(), **vars(args_lora)}
-        args = LoraTrainingArguments(**args)
-        lora_train(args)
-    else:
-        train(args)
+    train(args)

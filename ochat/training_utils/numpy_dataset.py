@@ -25,7 +25,7 @@ class NumpyDataset:
             self.length = table.num_rows
 
             # read metadata
-            self.metadata = table.schema.metadata.get(b"metadata_json", None)
+            self.metadata = (table.schema.metadata or {}).get(b"metadata_json", None)
             if self.metadata is not None:
                 self.metadata = orjson.loads(self.metadata)
         elif os.path.isfile(f"{dataset_filename}.pickle"):
@@ -43,7 +43,7 @@ class NumpyDataset:
             self.length = table.num_rows
 
             # read metadata
-            self.metadata = table.schema.metadata.get(b"metadata_json", None)
+            self.metadata = (table.schema.metadata or {}).get(b"metadata_json", None)
             if self.metadata is not None:
                 self.metadata = orjson.loads(self.metadata)
         elif os.path.isfile(f"{dataset_filename}.part000.pickle"):
@@ -87,7 +87,7 @@ class NumpyDataset:
                 self.dataset[k] = np.concatenate([d[k] for d in datasets], axis=0)
             self.length = sum([table.num_rows for table in datasets])
             # read metadata from the last part
-            self.metadata = table.schema.metadata.get(b"metadata_json", None)
+            self.metadata = (table.schema.metadata or {}).get(b"metadata_json", None)
             if self.metadata is not None:
                 self.metadata = orjson.loads(self.metadata)
         else:
