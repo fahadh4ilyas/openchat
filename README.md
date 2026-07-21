@@ -20,7 +20,7 @@
   <img src="assets/openchat_grok.png" style="width: 45%;">
 </div>
 
-OpenChat is an innovative library of open-source language models, fine-tuned with [C-RLFT](https://arxiv.org/pdf/2309.11235.pdf) - a strategy inspired by offline reinforcement learning. Our models learn from mixed-quality data without preference labels, delivering exceptional performance on par with ChatGPT, even with a 7B model. Despite our simple approach, we are committed to developing a high-performance, commercially viable, open-source large language model, and we continue to make significant strides toward this vision.
+OpenChat is an innovative library of open-source language models, originally fine-tuned with [C-RLFT](https://arxiv.org/pdf/2309.11235.pdf) - a strategy inspired by offline reinforcement learning. The current codebase supports SFT, DPO, and ORPO training with padding-free training and the Multipack Sampler, achieving 3–10× speedup over conventional padded training. DPO and ORPO use a combined forward approach (single forward for both chosen and rejected) compatible with DeepSpeed's forward/backward pairing.
 
 [![DOI](https://zenodo.org/badge/645397533.svg)](https://zenodo.org/badge/latestdoi/645397533)
 
@@ -230,6 +230,8 @@ SFT example:
 
 For C-RLFT, `condition` should be set as the class the conversation belongs to (e.g. `GPT3` or `GPT4`). The `weight` is assigned as `0` for human messages and `w` for assistant responses, where `w` is the weight of the class (e.g. `0.1` for `GPT3` and `1` for `GPT4`, as found in our C-RLFT paper).
 
+> **Note**: The C-RLFT conditioning system (class labels and variable per-token weights) is legacy code from upstream OpenChat. In the current codebase, `condition` is always empty and `weight` is always 0 (user) or 1 (assistant) — only the standard CE loss mask is active. DPO and ORPO training use binary chosen/rejected preference pairs, not quality-based scoring.
+
 C-RLFT example:
 
 ```json
@@ -287,7 +289,19 @@ python -m ochat.data.generate_dpo_dataset \
     --out-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH
 ```
 
-Key flags for both commands:
+**ORPO:**
+
+```bash
+python -m ochat.data.generate_orpo_dataset \
+    --model-type MODEL_TYPE \
+    --model-path BASE_REPO \
+    --in-files data_orpo.jsonl \
+    --out-prefix PRETOKENIZED_ORPO_DATA_OUTPUT_PATH
+```
+
+> ORPO uses the same data format as DPO and always skips reference log-prob computation (they aren't needed).
+
+Key flags for all commands:
 
 | Flag | Description |
 |---|---|
@@ -355,6 +369,40 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
 
 You can find checkpoints of all epochs in `PATH_TO_SAVE_MODEL`. Then you may evaluate each epoch and choose the best one.
 
+#### Single-GPU Training
+
+For development, debugging, or single-GPU setups, use the `train_single.py` scripts. These use plain PyTorch (`loss.backward()`) without DeepSpeed:
+
+```bash
+# SFT single-GPU
+python -m ochat.training_sft.train_single \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 --save_every 1
+
+# DPO single-GPU (LoRA only)
+python -m ochat.training_dpo.train_single \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 --save_every 1 \
+    --use_lora --dpo_beta 0.1
+
+# ORPO single-GPU (full FT or LoRA)
+python -m ochat.training_orpo.train_single \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 --save_every 1 \
+    --orpo_beta 0.1
+```
+
+> Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, chunk_size, fast kernels, etc.) except DeepSpeed-specific options.
+
 #### DPO Training
 
 DPO training is LoRA/QLoRA only. The frozen base model serves as the reference — no separate model copy is needed. Data format and pre-tokenization are covered above.
@@ -379,6 +427,8 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
 ```
 
 > DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT. `base_lr` defaults to `1e-2`.
+>
+> **`batch_max_len` in DPO/ORPO**: The combined forward concatenates chosen and rejected into a single batch. The dataset `total_length` is `chosen_len + rejected_len`, so `batch_max_len` directly controls the combined token count. For example, `batch_max_len=4096` means up to ~2048 chosen + ~2048 rejected tokens per GPU.
 
 #### ORPO Training (Odds Ratio Preference Optimization)
 
@@ -484,6 +534,52 @@ ORPO-specific:
 | `--orpo_beta` | 0.1 | ORPO odds-ratio penalty weight (λ in the paper) |
 
 > For DeepSpeed ZERO offloading, use `ochat.training_sft.train_offload` as the module and set `"offload_optimizer": true` in the DeepSpeed config.
+
+## Architecture Notes
+
+### DPO/ORPO Combined Forward
+
+DPO and ORPO training use a single forward pass for both chosen and rejected responses. The model's `return_per_seq_logps=True` flag returns per-sequence log-prob sums (split by `cu_seqlens`), which are then divided into chosen/rejected halves. This avoids the "two-forward-one-backward" incompatibility with DeepSpeed's forward/backward pairing.
+
+The combined forward is implemented across all 25 model files in `ochat/models/`. For details, see `MODEL_FORWARD_AUDIT.md` and `DPO_ORPO_TRL_AUDIT.md`.
+
+### ORPO Log-Prob Normalization
+
+ORPO uses **average** per-token log-probabilities (normalized by response token count via `_per_seq_response_tokens`) to match the TRL reference implementation. This ensures the `log1mexp` term in the odds ratio is numerically meaningful.
+
+### C-RLFT Status
+
+C-RLFT (condition-based class labeling with variable per-token weights) is legacy code from upstream OpenChat. The `condition` field and non-binary `weight` values are no longer consumed by any training loop. DPO and ORPO use standard binary preference pairs.
+
+## Testing
+
+Run the CPU test suite with pytest:
+
+```bash
+pytest -m cpu
+```
+
+For GPU tests (requires CUDA):
+
+```bash
+pytest -m gpu
+```
+
+End-to-end tests for SFT, DPO, and ORPO training are in `e2e_test/sft/`, `e2e_test/dpo/`, and `e2e_test/orpo/`. These run the full pipeline (convert → tokenize → train) on small datasets:
+
+```bash
+# SFT
+cd e2e_test/sft
+bash run.sh --model-path /path/to/model
+
+# DPO
+cd e2e_test/dpo
+bash run.sh --model-path /path/to/model
+
+# ORPO
+cd e2e_test/orpo
+bash run.sh --model-path /path/to/model
+```
 
 ## Limitations
 
