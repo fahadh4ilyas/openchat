@@ -204,7 +204,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         for k in rejected_data:
             row[f"rejected_{k}"] = rejected_data[k]
 
-        row["total_length"] = max(chosen_data["total_length"], rejected_data["total_length"])
+        row["total_length"] = chosen_data["total_length"] + rejected_data["total_length"]
         row["num_seqs"] = float(sum(chosen_data.get("nz_shifted_loss_weights", [0])) +
                                 sum(rejected_data.get("nz_shifted_loss_weights", [0])))
 

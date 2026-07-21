@@ -25,10 +25,8 @@ from ochat.data.generate_dpo_dataset import DataArguments, generate_dataset
 
 
 if __name__ == "__main__":
-    # Parse args, force --no-ref-logps
-    args_list = sys.argv[1:] if "--no-ref-logps" not in sys.argv else sys.argv[1:]
-    if "--no-ref-logps" not in args_list:
-        args_list.append("--no-ref-logps")
+    # Remove --no-ref-logps if present (ORPO always skips ref log-probs)
+    args_list = [a for a in sys.argv[1:] if a != "--no-ref-logps"]
 
     # Reuse DPO data generation pipeline (same JSONL format, same tokenization)
     import argparse

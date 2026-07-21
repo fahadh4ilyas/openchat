@@ -401,7 +401,7 @@ def _sidekick_weights(original_weights: list, kept_positions: list, pos: int) ->
     return weights
 
 
-def process_batch(job_id: int, batch: List[str], args, out_dir: str):
+def process_batch(job_id: int, batch: List[str], args, out_dir: str, pair_label: str = "DPO"):
     model_config = MODEL_CONFIG_MAP.get(args.model_type)
 
     if model_config:
@@ -411,7 +411,7 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
         tokenizer = AutoProcessor.from_pretrained(args.model_path)
 
     results = []
-    job_print(job_id, f"Processing {len(batch)} DPO pairs...")
+    job_print(job_id, f"Processing {len(batch)} {pair_label} pairs...")
     pydantic_context = {"use_json_repair": args.use_json_repair}
 
     for line in batch:
@@ -469,6 +469,8 @@ def main():
     parser.add_argument("--max-jobs", type=int, default=10)
     parser.add_argument("--use-json-repair", action="store_true",
                         help="Use json_repair for parsing arguments in tools")
+    parser.add_argument("--pair-label", type=str, default="DPO",
+                        help="Label for log messages (e.g. DPO, ORPO)")
     args = parser.parse_args()
 
     if "chatml" not in args.model_type:
@@ -495,7 +497,7 @@ def main():
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
         handles = {
-            executor.submit(process_batch, job_id=job_id, batch=batch, args=args, out_dir=out_dir): job_id
+            executor.submit(process_batch, job_id=job_id, batch=batch, args=args, out_dir=out_dir, pair_label=args.pair_label): job_id
             for job_id, batch in batches
         }
 
