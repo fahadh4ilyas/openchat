@@ -239,6 +239,15 @@ C-RLFT example:
 {"items":[{"role":"user","content":"What is C-RLFT?","weight":0.0},{"role":"assistant","content":"I don't know.","weight":0.1}],"condition":"GPT3","system":""}
 ```
 
+DPO/ORPO example (paired chosen/rejected):
+
+```json
+{"chosen":{"items":[{"role":"user","content":"What is the capital of France?","weight":0.0},{"role":"assistant","content":"The capital of France is Paris.","weight":1.0}],"system":"You are a helpful AI assistant."},"rejected":{"items":[{"role":"user","content":"What is the capital of France?","weight":0.0},{"role":"assistant","content":"France is in Europe.","weight":1.0}],"system":"You are a helpful AI assistant."}}
+{"chosen":{"items":[{"role":"user","content":"Write a Python Fibonacci function.","weight":0.0},{"role":"assistant","content":"def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a","weight":1.0}],"system":"You are a helpful AI assistant."},"rejected":{"items":[{"role":"user","content":"Write a Python Fibonacci function.","weight":0.0},{"role":"assistant","content":"def fib(n):\n    return fib(n-1) + fib(n-2)","weight":1.0}],"system":"You are a helpful AI assistant."}}
+```
+
+> DPO and ORPO share the same paired JSONL format. The `weight` field follows the same convention: `0` for user messages, `1` for assistant responses. For more examples, see `e2e_test/dpo/data_dpo.jsonl` and `e2e_test/orpo/data_orpo.jsonl`.
+
 #### Converting from OpenAI Format
 
 If your data is in the OpenAI chat-completions format (list of `messages` with `role`/`content`), use the conversion tools to transform it into OpenChat `Conversation` objects. These tools round-trip through the model's tokenizer to correctly handle thinking blocks, tool calls, and other template-specific transformations.
