@@ -49,13 +49,7 @@ def weighted_token_accuracy(
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-# @torch.compile  # type: ignore
-def weighted_cross_entropy(
-    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
-):
-    return (
-        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
-    ).sum()
+from ochat.training_utils._ce_utils import weighted_cross_entropy
 
 
 @torch.compile  # type: ignore
@@ -502,6 +496,7 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
+        return_per_seq_logps: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
@@ -514,12 +509,18 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
         )
 
         loss = None
+        per_seq_logps = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
             
             total_loss = 0.0
             total_acc = 0.0
             
+            if return_per_seq_logps:
+                _num_seq = int(cu_seqlens.shape[0] - 1)
+                _all_token_losses: list = []
+                _all_token_indices: list = []
+
             # Iterate through the sequence in chunks
             if chunk_size > 0:
                 for i in range(0, hidden_states.size(0), chunk_size):
@@ -538,7 +539,17 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
                         logits_chunk = logits_chunk * self.config.final_logit_softcapping
                     
                     # 4. Compute metrics
-                    chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
+                    if return_per_seq_logps:
+                        token_losses = weighted_cross_entropy(
+                            logits_chunk, label_chunk, weight_chunk, reduction="none"
+                        )
+                        chunk_loss = token_losses.sum()
+                        positions = torch.arange(i, i + logits_chunk.size(0), device=logits_chunk.device)
+                        seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+                        _all_token_losses.append(token_losses)
+                        _all_token_indices.append(seq_indices)
+                    else:
+                        chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
                     chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
                     
                     # 5. Accumulate
@@ -556,8 +567,26 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
                     logits = torch.tanh(logits)
                     logits = logits * self.config.final_logit_softcapping
 
-                total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
+                if return_per_seq_logps:
+                    token_losses = weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights, reduction="none"
+                    )
+                    total_loss = token_losses.sum()
+                    positions = torch.arange(logits.size(0), device=logits.device)
+                    seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+                    _all_token_losses.append(token_losses)
+                    _all_token_indices.append(seq_indices)
+                else:
+                    total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+
+            if return_per_seq_logps:
+                all_losses = torch.cat(_all_token_losses)
+                all_indices = torch.cat(_all_token_indices)
+                per_seq_loss = torch.zeros(_num_seq, device=all_losses.device, dtype=all_losses.dtype)
+                per_seq_loss.index_add_(0, all_indices, all_losses)
+                per_seq_logps = -per_seq_loss
+
 
             # Finalize metrics
             if num_seq > 0:
@@ -567,5 +596,5 @@ class Gemma2ForCausalLM(UnpaddedGemma2PreTrainedModel):
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=None, # NEVER return the full logits tensor
+            logits=per_seq_logps,
         )

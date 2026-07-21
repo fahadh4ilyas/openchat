@@ -46,13 +46,7 @@ def weighted_token_accuracy(
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-# @torch.compile  # type: ignore
-def weighted_cross_entropy(
-    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
-):
-    return (
-        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
-    ).sum()
+from ochat.training_utils._ce_utils import weighted_cross_entropy
 
 
 def rotate_half(x: torch.Tensor):
@@ -552,6 +546,7 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
         num_seq: int = 0,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
+        return_per_seq_logps: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
@@ -564,8 +559,21 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
         logits = self.lm_head(hidden_states)
 
         loss = None
+        per_seq_logps = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
+
+            if return_per_seq_logps:
+                token_losses = weighted_cross_entropy(
+                    logits, nz_shifted_label_ids, nz_shifted_loss_weights, reduction="none"
+                )
+                total_loss = token_losses.sum()
+                positions = torch.arange(logits.size(0), device=logits.device)
+                seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+                _num_seq = int(cu_seqlens.shape[0] - 1)
+                per_seq_loss = torch.zeros(_num_seq, device=total_loss.device, dtype=total_loss.dtype)
+                per_seq_loss.index_add_(0, seq_indices, token_losses)
+                per_seq_logps = -per_seq_loss
 
             if num_seq > 0:
                 acc = (
@@ -594,5 +602,5 @@ class PhiForCausalLM(UnpaddedPhiPreTrainedModel):
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=logits,
+            logits=per_seq_logps,
         )

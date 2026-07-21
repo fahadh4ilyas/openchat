@@ -52,13 +52,7 @@ def weighted_token_accuracy(
     return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
 
 
-# @torch.compile  # type: ignore
-def weighted_cross_entropy(
-    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
-):
-    return (
-        weights * cross_entropy_loss(logits, labels, inplace_backward=True)[0]
-    ).sum()
+from ochat.training_utils._ce_utils import weighted_cross_entropy
 
 
 @torch.compile  # type: ignore
@@ -833,6 +827,7 @@ class Qwen3_5ForConditionalGeneration(UnpaddedQwen3_5PreTrainedModel):
         chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
+        return_per_seq_logps: bool = False,
     ) -> CausalLMOutputWithPast:
         # Model logits
         hidden_states = self.model(
@@ -848,12 +843,18 @@ class Qwen3_5ForConditionalGeneration(UnpaddedQwen3_5PreTrainedModel):
         )
 
         loss = None
+        per_seq_logps = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
-            
+
             total_loss = 0.0
             total_acc = 0.0
-            
+
+            if return_per_seq_logps:
+                _num_seq = int(cu_seqlens.shape[0] - 1)
+                _all_token_losses: list = []
+                _all_token_indices: list = []
+
             # Iterate through the sequence in chunks
             if chunk_size > 0:
                 for i in range(0, hidden_states.size(0), chunk_size):
@@ -861,27 +862,54 @@ class Qwen3_5ForConditionalGeneration(UnpaddedQwen3_5PreTrainedModel):
                     hidden_chunk = hidden_states[i : i + chunk_size]
                     label_chunk = nz_shifted_label_ids[i : i + chunk_size]
                     weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
-                    
+
                     # 2. Project ONLY this chunk to vocab size
                     logits_chunk = self.lm_head(hidden_chunk)
-                    
+
                     # 3. Compute loss and accuracy for this chunk
-                    chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
+                    if return_per_seq_logps:
+                        token_losses = weighted_cross_entropy(
+                            logits_chunk, label_chunk, weight_chunk, reduction="none"
+                        )
+                        chunk_loss = token_losses.sum()
+                        positions = torch.arange(i, i + logits_chunk.size(0), device=logits_chunk.device)
+                        seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+                        _all_token_losses.append(token_losses)
+                        _all_token_indices.append(seq_indices)
+                    else:
+                        chunk_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
                     chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
-                    
+
                     # 4. Accumulate
                     total_loss += chunk_loss
                     total_acc += chunk_acc
-                    
+
                     # 5. Free the massive chunk from VRAM immediately
                     del logits_chunk
                     del hidden_chunk
             else:
                 logits = self.lm_head(hidden_states)
-                total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
+                if return_per_seq_logps:
+                    token_losses = weighted_cross_entropy(
+                        logits, nz_shifted_label_ids, nz_shifted_loss_weights, reduction="none"
+                    )
+                    total_loss = token_losses.sum()
+                    positions = torch.arange(logits.size(0), device=logits.device)
+                    seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+                    _all_token_losses.append(token_losses)
+                    _all_token_indices.append(seq_indices)
+                else:
+                    total_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
                 total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
 
             # Finalize metrics
+            if return_per_seq_logps:
+                all_losses = torch.cat(_all_token_losses)
+                all_indices = torch.cat(_all_token_indices)
+                per_seq_loss = torch.zeros(_num_seq, device=all_losses.device, dtype=all_losses.dtype)
+                per_seq_loss.index_add_(0, all_indices, all_losses)
+                per_seq_logps = -per_seq_loss
+
             if num_seq > 0:
                 loss = (total_loss / num_seq, total_acc / num_seq)
             else:
@@ -889,5 +917,5 @@ class Qwen3_5ForConditionalGeneration(UnpaddedQwen3_5PreTrainedModel):
 
         return CausalLMOutputWithPast(
             loss=loss,  # type: ignore
-            logits=None,
+            logits=per_seq_logps,
         )
