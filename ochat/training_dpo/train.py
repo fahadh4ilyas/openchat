@@ -30,6 +30,7 @@ from ochat.training_utils._training_args import (
 from ochat.training_dpo.utils import (
     mlflow_stopper_wrapper,
     dpo_batch_collate,
+    _combine_chosen_rejected_batch,
     dpo_loss,
     check_ref_logps_precomputed,
     get_latest_checkpoint,
@@ -276,11 +277,19 @@ def train(args):
                     rejected_ref = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
                 model_engine.module.enable_adapter_layers()
 
-            # Forward: policy log-probs for both chosen and rejected
-            chosen_logp = _forward_and_logp(model_engine, chosen_t, batch_info, args, all_numseq)
-            rejected_logp = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
+            # Combine chosen + rejected → single forward + split per-seq log-probs
+            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            per_seq_logps = model_engine(
+                **combined_t, **batch_info,
+                num_seq=0,
+                return_per_seq_logps=True,
+                chunk_size=args.chunk_size,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
 
-            # DPO loss
+            chosen_logp = per_seq_logps[:num_chosen]
+            rejected_logp = per_seq_logps[num_chosen:]
             loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
 
             model_engine.backward(loss)
@@ -292,7 +301,7 @@ def train(args):
 
             model_engine.step()
 
-            del chosen_t, rejected_t
+            del combined_t, chosen_t, rejected_t
             if args.torch_empty_cache_steps is not None and step % args.torch_empty_cache_steps == 0:
                 torch.cuda.empty_cache()
 
@@ -336,8 +345,17 @@ def train(args):
                             rejected_ref = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
                             model_engine.module.enable_adapter_layers()
 
-                        chosen_logp = _forward_and_logp(model_engine, chosen_t, batch_info, args, all_numseq)
-                        rejected_logp = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
+                        combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+                        per_seq_logps = model_engine(
+                            **combined_t, **batch_info,
+                            num_seq=0,
+                            return_per_seq_logps=True,
+                            chunk_size=args.chunk_size,
+                            use_fast_norm=args.use_fast_norm,
+                            use_fast_rope=args.use_fast_rope,
+                        ).logits
+                        chosen_logp = per_seq_logps[:num_chosen]
+                        rejected_logp = per_seq_logps[num_chosen:]
                         eval_loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
 
                         eval_total_loss.add_(eval_loss)
@@ -387,8 +405,17 @@ def train(args):
                             rejected_ref = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
                             model_engine.module.enable_adapter_layers()
 
-                        chosen_logp = _forward_and_logp(model_engine, chosen_t, batch_info, args, all_numseq)
-                        rejected_logp = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
+                        combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+                        per_seq_logps = model_engine(
+                            **combined_t, **batch_info,
+                            num_seq=0,
+                            return_per_seq_logps=True,
+                            chunk_size=args.chunk_size,
+                            use_fast_norm=args.use_fast_norm,
+                            use_fast_rope=args.use_fast_rope,
+                        ).logits
+                        chosen_logp = per_seq_logps[:num_chosen]
+                        rejected_logp = per_seq_logps[num_chosen:]
                         eval_loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
 
                         eval_total_loss.add_(eval_loss)

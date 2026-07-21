@@ -165,6 +165,42 @@ def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] 
     return chosen_tensor, rejected_tensor, chosen_ref_logps, rejected_ref_logps, batch_info
 
 
+def _combine_chosen_rejected_batch(chosen_t: dict, rejected_t: dict) -> tuple:
+    """Combine chosen + rejected tensor dicts into a single batch.
+
+    Concatenates packed tensors and offsets the rejected cu_seqlens so that
+    sequences from both sides are treated as one batch by the model.
+
+    Returns:
+        combined: dict with concatenated tensors.
+        num_chosen: number of chosen sequences (for splitting per_seq_logps).
+    """
+    num_chosen = chosen_t["cu_seqlens"].shape[0] - 1
+    chosen_total = chosen_t["cu_seqlens"][-1]
+
+    combined = {}
+    for key in chosen_t:
+        if key == "cu_seqlens":
+            combined[key] = torch.cat([chosen_t[key], rejected_t[key][1:] + chosen_total])
+        elif key == "max_seqlen":
+            pass  # handled by caller via batch_info
+        elif isinstance(chosen_t[key], torch.Tensor):
+            combined[key] = torch.cat([chosen_t[key], rejected_t[key]])
+
+    for key in ["pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"]:
+        if key in chosen_t or key in rejected_t:
+            c_val = chosen_t.get(key, torch.empty(0, device=next(iter(chosen_t.values())).device))
+            r_val = rejected_t.get(key, torch.empty(0, device=next(iter(rejected_t.values())).device))
+            if c_val.numel() > 0 and r_val.numel() > 0:
+                combined[key] = torch.cat([c_val, r_val])
+            elif c_val.numel() > 0:
+                combined[key] = c_val
+            elif r_val.numel() > 0:
+                combined[key] = r_val
+
+    return combined, num_chosen
+
+
 def dpo_loss(
     chosen_logp: torch.Tensor,
     rejected_logp: torch.Tensor,

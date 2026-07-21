@@ -38,6 +38,8 @@ from ochat.training_utils._training_args import (
 from ochat.training_orpo.utils import (
     mlflow_stopper_wrapper,
     orpo_batch_collate,
+    _combine_chosen_rejected_batch,
+    _per_seq_response_tokens,
     orpo_loss,
     get_latest_checkpoint,
     create_dataset,
@@ -190,10 +192,20 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
-            loss_chosen, chosen_logp = _forward_and_logp(model_engine, chosen_t, batch_info, args, all_numseq)
-            _, rejected_logp = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
+            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            per_seq_logps = model_engine(
+                **combined_t, **batch_info,
+                num_seq=0,
+                return_per_seq_logps=True,
+                chunk_size=args.chunk_size,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
 
-            eval_loss = loss_chosen.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
+            resp_tokens = _per_seq_response_tokens(combined_t)
+            chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
+            rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
+            eval_loss = -chosen_logp.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
             eval_total_loss.add_(eval_loss)
             eval_total_steps += 1
 
@@ -261,7 +273,7 @@ def train(args):
         metadata["steps"] = train_total_steps
         mlflow.log_params(metadata)
 
-    model_engine, optimizer = create_model(args, base_lr)
+    model_engine, optimizer = create_model(args, args.base_lr)
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 
     progress_bar = None
@@ -292,12 +304,21 @@ def train(args):
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
-            # Forward both sides
-            loss_chosen, chosen_logp = _forward_and_logp(model_engine, chosen_t, batch_info, args, all_numseq)
-            _, rejected_logp = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
+            # Combine chosen + rejected → single forward + split per-seq log-probs
+            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            per_seq_logps = model_engine(
+                **combined_t, **batch_info,
+                num_seq=0,
+                return_per_seq_logps=True,
+                chunk_size=args.chunk_size,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
 
-            # ORPO loss = SFT NLL on chosen + odds-ratio penalty
-            loss = loss_chosen.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
+            resp_tokens = _per_seq_response_tokens(combined_t)
+            chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
+            rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
+            loss = -chosen_logp.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
 
             model_engine.backward(loss)
 
@@ -308,7 +329,7 @@ def train(args):
 
             model_engine.step()
 
-            del chosen_t, rejected_t
+            del combined_t, chosen_t, rejected_t
             if args.torch_empty_cache_steps is not None and step % args.torch_empty_cache_steps == 0:
                 torch.cuda.empty_cache()
 
@@ -316,7 +337,7 @@ def train(args):
                 mlflow.log_metrics(
                     metrics={
                         "train/loss": loss.item(),
-                        "train/sft_loss": loss_chosen.mean().item(),
+                        "train/sft_loss": (-chosen_logp.mean()).item(),
                         "train/lr": lr_this_step,
                         "train/epoch": args.epochs * step / train_total_steps,
                     },

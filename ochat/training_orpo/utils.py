@@ -28,6 +28,7 @@ from ochat.training_utils.numpy_dataset import NumpyDataset
 from ochat.training_dpo.utils import (
     batch_to_tensor,
     _BATCH_KEYS,
+    _combine_chosen_rejected_batch,
     create_dataset,
     calculate_auto_lr,
     create_lr_scheduler,
@@ -51,6 +52,31 @@ def log1mexp(x: torch.FloatTensor) -> torch.FloatTensor:
     """
     t = -0.6931471805599453
     return torch.where(x < t, torch.log1p(-torch.exp(x)), torch.log(-torch.expm1(x)))
+
+
+def _per_seq_response_tokens(combined_batch: dict) -> torch.Tensor:
+    """Compute per-sequence response token counts from packed loss weights.
+
+    nz_shifted_loss_weights is 1 for response tokens and 0 for prompt.
+    Summing per sequence gives the number of response tokens per sequence.
+
+    Args:
+        combined_batch: dict with "cu_seqlens" and "nz_shifted_loss_weights" tensors.
+
+    Returns:
+        Tensor of shape (num_seqs,) with response token count per sequence.
+    """
+    cu_seqlens = combined_batch["cu_seqlens"]
+    weights = combined_batch["nz_shifted_loss_weights"]
+    num_seqs = int(cu_seqlens.shape[0] - 1)
+
+    positions = torch.arange(len(weights), device=weights.device)
+    seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
+    seq_indices = seq_indices.clamp(min=0)
+
+    resp_tokens = torch.zeros(num_seqs, device=weights.device, dtype=torch.float32)
+    resp_tokens.index_add_(0, seq_indices, weights.float())
+    return resp_tokens
 
 
 def orpo_loss(
