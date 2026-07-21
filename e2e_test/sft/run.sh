@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # ---- Defaults (non-machine-specific) ----
@@ -12,7 +13,6 @@ PYTHON=python
 DEEPSPEED=deepspeed
 MODEL_TYPE=qwen3_5_chatml
 MLFLOW_URI=http://localhost:5000
-DS_CONFIG=ochat/deepspeed_config/deepspeed_config.json
 BATCH_MAX_LEN=2048
 MAX_STEPS=5
 
@@ -26,7 +26,6 @@ while [[ $# -gt 0 ]]; do case "$1" in
     --model-path)   MODEL_PATH="$2"; shift 2 ;;
     --model-type)   MODEL_TYPE="$2"; shift 2 ;;
     --mlflow-uri)   MLFLOW_URI="$2"; shift 2 ;;
-    --ds-config)    DS_CONFIG="$2"; shift 2 ;;
     --batch-max-len) BATCH_MAX_LEN="$2"; shift 2 ;;
     --max-steps)    MAX_STEPS="$2"; shift 2 ;;
     -h|--help)
@@ -38,7 +37,6 @@ while [[ $# -gt 0 ]]; do case "$1" in
         echo "  --deepspeed PATH      DeepSpeed binary (default: $DEEPSPEED)"
         echo "  --model-type TYPE     Model type for config (default: $MODEL_TYPE)"
         echo "  --mlflow-uri URI      MLflow tracking URI (default: $MLFLOW_URI)"
-        echo "  --ds-config PATH      DeepSpeed config JSON (default: $DS_CONFIG)"
         echo "  --batch-max-len N     Batch max length (default: $BATCH_MAX_LEN)"
         echo "  --max-steps N         Training steps per mode (default: $MAX_STEPS)"
         exit 0 ;;
@@ -112,14 +110,14 @@ echo "  → output/single_lora/"
 echo ""
 echo "=== Step 5/6: DeepSpeed full fine-tuning (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_full_ft
-(cd /home/fahadh/research-openchat/openchat && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_sft.train \
     --model_path "$MODEL_PATH" \
     --data_prefix "$SCRIPT_DIR/pretokenized/data" \
     --save_path "$SCRIPT_DIR/output/deepspeed_full_ft" \
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment_name e2e_sft --run_name deepspeed_full_ft \
     --tracking_uri "$MLFLOW_URI")
 echo "  → output/deepspeed_full_ft/"
@@ -128,7 +126,7 @@ echo "  → output/deepspeed_full_ft/"
 echo ""
 echo "=== Step 6/6: DeepSpeed LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_lora
-(cd /home/fahadh/research-openchat/openchat && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_sft.train \
     --model_path "$MODEL_PATH" \
     --data_prefix "$SCRIPT_DIR/pretokenized/data" \
@@ -136,7 +134,7 @@ rm -rf output/deepspeed_lora
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
     --use_lora \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment_name e2e_sft --run_name deepspeed_lora \
     --tracking_uri "$MLFLOW_URI")
 echo "  → output/deepspeed_lora/"
