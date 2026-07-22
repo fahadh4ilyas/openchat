@@ -7,41 +7,15 @@ Reference: Hong et al., "ORPO: Monolithic Preference Optimization without
 Reference Model" (arXiv:2403.07691).
 """
 
-import os
-import math
-import json
-import shutil
-import mlflow
 import torch
 import torch.nn.functional as F
 import numpy as np
-import torch.distributed as dist
 
 from typing import Dict, Optional
-from pathlib import Path
-from functools import partial
 
 from transformers import ProcessorMixin
 
-from ochat.config import MODEL_CONFIG_MAP
-from ochat.training_utils.numpy_dataset import NumpyDataset
-from ochat.training_dpo.utils import (
-    batch_to_tensor,
-    _BATCH_KEYS,
-    _combine_chosen_rejected_batch,
-    create_dataset,
-    calculate_auto_lr,
-    create_lr_scheduler,
-    save_tokenizer,
-    load_tokenizer,
-    save_openchat_metadata,
-    clean_checkpoint,
-    get_latest_checkpoint,
-    mlflow_stopper_wrapper,
-)
-
-
-PAD_ID = 0
+from ochat.training_utils._common import batch_to_tensor
 
 
 def log1mexp(x: torch.FloatTensor) -> torch.FloatTensor:
@@ -92,8 +66,8 @@ def orpo_loss(
     where log(odds) = log_p - log(1 - exp(log_p)) = log_p - log1mexp(log_p).
 
     Args:
-        chosen_logp: Policy log-prob sum for each chosen response (shape: [B]).
-        rejected_logp: Policy log-prob sum for each rejected response (shape: [B]).
+        chosen_logp: Policy average log-prob for each chosen response (shape: [B]).
+        rejected_logp: Policy average log-prob for each rejected response (shape: [B]).
         beta: Temperature / weight parameter (λ in the paper, default 0.1).
 
     Returns:

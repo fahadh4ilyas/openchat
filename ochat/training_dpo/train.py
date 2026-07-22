@@ -10,7 +10,6 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Optional, Union, Literal, List
 
 import torch
 import torch.distributed as dist
@@ -27,12 +26,9 @@ from ochat.training_utils._training_args import (
     add_base_args,
     add_lora_args,
 )
-from ochat.training_dpo.utils import (
+from ochat.training_utils._common import (
+    combine_chosen_rejected_batch,
     mlflow_stopper_wrapper,
-    dpo_batch_collate,
-    _combine_chosen_rejected_batch,
-    dpo_loss,
-    check_ref_logps_precomputed,
     get_latest_checkpoint,
     create_dataset,
     calculate_auto_lr,
@@ -41,6 +37,11 @@ from ochat.training_dpo.utils import (
     clean_checkpoint,
     save_tokenizer,
     load_tokenizer,
+)
+from ochat.training_dpo.utils import (
+    dpo_batch_collate,
+    dpo_loss,
+    check_ref_logps_precomputed,
 )
 from ochat.training_utils.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_utils.numpy_dataset import NumpyDataset
@@ -270,7 +271,7 @@ def train(args):
                 model_engine.module.enable_adapter_layers()
 
             # Combine chosen + rejected → single forward + split per-seq log-probs
-            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
             per_seq_logps = model_engine(
                 **combined_t, **batch_info,
                 num_seq=0,
@@ -337,7 +338,7 @@ def train(args):
                             rejected_ref = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
                             model_engine.module.enable_adapter_layers()
 
-                        combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+                        combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
                         per_seq_logps = model_engine(
                             **combined_t, **batch_info,
                             num_seq=0,
@@ -397,7 +398,7 @@ def train(args):
                             rejected_ref = _forward_and_logp(model_engine, rejected_t, batch_info, args, all_numseq)
                             model_engine.module.enable_adapter_layers()
 
-                        combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+                        combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
                         per_seq_logps = model_engine(
                             **combined_t, **batch_info,
                             num_seq=0,

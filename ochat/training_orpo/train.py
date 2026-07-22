@@ -11,10 +11,8 @@ import argparse
 import os
 import json
 from functools import partial
-from typing import Optional
 
 import torch
-import torch.nn.functional as F
 import torch.distributed as dist
 
 import tqdm
@@ -35,12 +33,9 @@ from ochat.training_utils._training_args import (
     add_base_args,
     add_lora_args,
 )
-from ochat.training_orpo.utils import (
+from ochat.training_utils._common import (
+    combine_chosen_rejected_batch,
     mlflow_stopper_wrapper,
-    orpo_batch_collate,
-    _combine_chosen_rejected_batch,
-    _per_seq_response_tokens,
-    orpo_loss,
     get_latest_checkpoint,
     create_dataset,
     calculate_auto_lr,
@@ -49,6 +44,11 @@ from ochat.training_orpo.utils import (
     clean_checkpoint,
     save_tokenizer,
     load_tokenizer,
+)
+from ochat.training_orpo.utils import (
+    orpo_batch_collate,
+    _per_seq_response_tokens,
+    orpo_loss,
 )
 from ochat.training_utils.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_utils.numpy_dataset import NumpyDataset
@@ -171,7 +171,7 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
-            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
             per_seq_logps = model_engine(
                 **combined_t, **batch_info,
                 num_seq=0,
@@ -284,7 +284,7 @@ def train(args):
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
             # Combine chosen + rejected → single forward + split per-seq log-probs
-            combined_t, num_chosen = _combine_chosen_rejected_batch(chosen_t, rejected_t)
+            combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
             per_seq_logps = model_engine(
                 **combined_t, **batch_info,
                 num_seq=0,
