@@ -127,23 +127,6 @@ def create_model(args, base_lr: float):
     return model, optimizer
 
 
-def _forward_and_logp(model, batch_tensor, batch_info, args, all_numseq):
-    """Run model forward; return (loss_chosen, chosen_logp)."""
-    loss, acc = model(
-        **batch_tensor,
-        **batch_info,
-        num_seq=all_numseq,
-        chunk_size=args.chunk_size,
-        use_fast_norm=args.use_fast_norm,
-        use_fast_rope=args.use_fast_rope,
-    ).loss
-
-    if isinstance(loss, tuple):
-        loss, _ = loss
-
-    return loss, -loss
-
-
 @mlflow_stopper_wrapper(is_distributed=False)
 def train(args):
     train_dataset = create_dataset(args, "train")

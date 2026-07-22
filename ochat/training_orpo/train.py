@@ -160,27 +160,6 @@ def create_model(args, base_lr: float):
     return model_engine, optimizer
 
 
-def _forward_and_logp(model_engine, batch_tensor, batch_info, args, all_numseq):
-    """Run model forward; return (loss_chosen, chosen_logp) per example.
-
-    loss_chosen = weighted CE (SFT component).
-    chosen_logp = sum of per-token log-probs over response tokens.
-    """
-    loss, acc = model_engine(
-        **batch_tensor,
-        **batch_info,
-        num_seq=all_numseq,
-        chunk_size=args.chunk_size,
-        use_fast_norm=args.use_fast_norm,
-        use_fast_rope=args.use_fast_rope,
-    ).loss
-
-    if isinstance(loss, tuple):
-        loss, _ = loss
-
-    return loss, -loss  # loss_chosen, chosen_logp
-
-
 def _eval_loop(model_engine, eval_loader, args, eval_epoch):
     """Run one evaluation pass, return average loss."""
     eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)

@@ -125,26 +125,16 @@ def create_model(args):
 
 
 def _forward_and_logp(model, batch_tensor, batch_info, args, all_numseq):
-    """Run model forward and return the sum of per-token log-probs.
-
-    The model computes weighted cross-entropy loss:
-        loss = sum(w_i * CE_i) where CE_i = -log(p_i)
-    With w_i = 1 for response tokens and 0 for prompt tokens:
-        sum(log_probs_response) = -loss
-    """
-    loss, acc = model(
+    """Run model forward and return per-example sum of log-probs over response tokens."""
+    return model(
         **batch_tensor,
         **batch_info,
         num_seq=all_numseq,
+        return_per_seq_logps=True,
         chunk_size=args.chunk_size,
         use_fast_norm=args.use_fast_norm,
         use_fast_rope=args.use_fast_rope,
-    ).loss
-
-    if isinstance(loss, tuple):
-        loss, _ = loss
-
-    return -loss
+    ).logits
 
 
 @mlflow_stopper_wrapper(is_distributed=False)

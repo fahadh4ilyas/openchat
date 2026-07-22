@@ -150,20 +150,16 @@ def create_model(args):
 
 
 def _forward_and_logp_ring(model_engine, batch_tensor, batch_info, args, total_seqs):
-    """Run model forward (ring) and return per-example sum of log-probs."""
-    loss, acc = model_engine(
+    """Run model forward (ring) and return per-example sum of log-probs over response tokens."""
+    return model_engine(
         **batch_tensor,
         **batch_info,
         total_seqs=total_seqs,
+        return_per_seq_logps=True,
         chunk_size=args.chunk_size,
         use_fast_norm=args.use_fast_norm,
         use_fast_rope=args.use_fast_rope,
-    ).loss
-
-    if isinstance(loss, tuple):
-        loss, _ = loss
-
-    return -loss
+    ).logits
 
 
 def _save_state_dict(model_engine, args):

@@ -52,22 +52,20 @@ def compute_ref_logps_online(model, batch_tensor: dict, batch_info: dict, args, 
     """Compute reference log-probs online by temporarily disabling LoRA adapters.
 
     The frozen base model (without LoRA) serves as the reference model.
-    Returns per-example sum of log-probs over response tokens.
+    Returns per-example sum of log-probs over response tokens (shape: [num_seqs]).
     """
     model.disable_adapter_layers()
     try:
         with torch.no_grad():
-            loss, acc = model(
+            return model(
                 **batch_tensor,
                 **batch_info,
                 num_seq=num_seq,
+                return_per_seq_logps=True,
                 chunk_size=args.chunk_size,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).loss
-            if isinstance(loss, tuple):
-                loss, _ = loss
-            return -loss
+            ).logits
     finally:
         model.enable_adapter_layers()
 

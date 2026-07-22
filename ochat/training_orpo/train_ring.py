@@ -156,23 +156,6 @@ def create_model(args, base_lr: float):
     return model_engine, optimizer
 
 
-def _forward_and_logp_ring(model_engine, batch_tensor, batch_info, args, total_seqs):
-    """Run model forward (ring); return (loss_chosen, chosen_logp)."""
-    loss, acc = model_engine(
-        **batch_tensor,
-        **batch_info,
-        total_seqs=total_seqs,
-        chunk_size=args.chunk_size,
-        use_fast_norm=args.use_fast_norm,
-        use_fast_rope=args.use_fast_rope,
-    ).loss
-
-    if isinstance(loss, tuple):
-        loss, _ = loss
-
-    return loss, -loss
-
-
 def _save_state_dict(model_engine, args):
     if model_engine.zero_optimization_stage() == 3:
         return model_engine._zero3_consolidated_16bit_state_dict()
