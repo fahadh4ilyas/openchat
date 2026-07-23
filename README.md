@@ -410,7 +410,7 @@ python -m ochat.training_orpo.train_single \
     --orpo_beta 0.1
 ```
 
-> Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, chunk_size, fast kernels, etc.) except DeepSpeed-specific options.
+> Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
 
 #### DPO Training
 
@@ -520,7 +520,6 @@ Common flags across all training modes:
 | `--quant_bits` | 4 | QLoRA quantization bits (4 or 8) |
 | **Performance** |||
 | `--use_ring` | false | Enable ring attention for long-context training |
-| `--chunk_size` | -1 | Chunk size for gradient checkpointing (-1 = auto) |
 | `--use_fast_norm` | false | Use custom CUDA RMS norm kernel |
 | `--use_fast_rope` | false | Use custom CUDA RoPE kernel |
 | `--deepspeed` | true | Enable DeepSpeed (required) |
