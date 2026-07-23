@@ -129,6 +129,36 @@ def create_model(args: TrainingArguments):
     return model, optimizer
 
 
+def _run_eval(model, eval_loader, args, eval_epoch, step=None):
+    model.eval()
+    eval_total_metric = torch.zeros((2,), dtype=torch.float32, device=args.device)
+    eval_total_steps = 0
+
+    eval_loader.set_epoch(eval_epoch)
+    with torch.inference_mode():
+        for (batch_tensor, batch_info), num_seq in eval_loader:
+            batch_tensor = {k: (v.to(args.device) if v is not None else None)
+                            for k, v in batch_tensor.items()}
+            eval_loss, eval_acc = model(
+                **batch_tensor, **batch_info, num_seq=num_seq,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).loss
+            if isinstance(eval_loss, tuple):
+                eval_loss, _ = eval_loss
+            eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
+            eval_total_steps += 1
+
+    eval_total_metric.div_(eval_total_steps)
+
+    if step is not None:
+        eval_loss, eval_acc = eval_total_metric.cpu().numpy()
+        mlflow.log_metrics(metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step)
+
+    model.train()
+    return eval_total_metric
+
+
 @mlflow_stopper_wrapper(is_distributed=False)
 def train(args: TrainingArguments):
     # Dataset
@@ -218,7 +248,6 @@ def train(args: TrainingArguments):
                 **batch_tensor,
                 **batch_info,
                 num_seq=num_seq,
-                chunk_size=args.chunk_size,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).loss
@@ -266,53 +295,8 @@ def train(args: TrainingArguments):
                 and args.eval_every
                 and (step % args.eval_every == 0)
             ):
-                model.eval()
-
-                eval_total_metric = torch.zeros(
-                    (2,), dtype=torch.float32, device=args.device
-                )
-                eval_total_steps = 0
-
-                eval_loader.set_epoch(eval_epoch)
-                with torch.inference_mode():
-                    for (
-                        batch_tensor,
-                        batch_info,
-                    ), num_seq in eval_loader:
-                        # To device
-                        batch_tensor = {
-                            k: (v.to(args.device) if v is not None else None)
-                            for k, v in batch_tensor.items()
-                        }
-
-                        # Eval
-                        eval_loss, eval_acc = model(
-                            **batch_tensor,
-                            **batch_info,
-                            num_seq=num_seq,
-                            chunk_size=args.chunk_size,
-                            use_fast_norm=args.use_fast_norm,
-                            use_fast_rope=args.use_fast_rope,
-                        ).loss
-
-                        if isinstance(eval_loss, tuple):
-                            eval_loss, _ = eval_loss
-
-                        # Accumulate eval loss
-                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
-                        eval_total_steps += 1
-
-                # Gather eval loss (reduce sum)
-                eval_total_metric.div_(eval_total_steps)
-
+                _run_eval(model, eval_loader, args, eval_epoch, step=step)
                 eval_epoch += 1
-
-                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                mlflow.log_metrics(
-                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
-                )
-
-                model.train()
 
             if (
                 args.save_strategy == "step"
@@ -346,53 +330,8 @@ def train(args: TrainingArguments):
                     and ((epoch + 1) % args.eval_every == 0)
                 )
             ):
-                model.eval()
-
-                eval_total_metric = torch.zeros(
-                    (2,), dtype=torch.float32, device=args.device
-                )
-                eval_total_steps = 0
-
-                eval_loader.set_epoch(eval_epoch)
-                with torch.inference_mode():
-                    for (
-                        batch_tensor,
-                        batch_info,
-                    ), num_seq in eval_loader:
-                        # To device
-                        batch_tensor = {
-                            k: (v.to(args.device) if v is not None else None)
-                            for k, v in batch_tensor.items()
-                        }
-
-                        # Eval
-                        eval_loss, eval_acc = model(
-                            **batch_tensor,
-                            **batch_info,
-                            num_seq=num_seq,
-                            chunk_size=args.chunk_size,
-                            use_fast_norm=args.use_fast_norm,
-                            use_fast_rope=args.use_fast_rope,
-                        ).loss
-
-                        if isinstance(eval_loss, tuple):
-                            eval_loss, _ = eval_loss
-
-                        # Accumulate eval loss
-                        eval_total_metric.add_(torch.stack([eval_loss, eval_acc]))
-                        eval_total_steps += 1
-
-                # Gather eval loss (reduce sum)
-                eval_total_metric.div_(eval_total_steps)
-
+                _run_eval(model, eval_loader, args, eval_epoch, step=step)
                 eval_epoch += 1
-
-                eval_loss, eval_acc = eval_total_metric.cpu().numpy()
-                mlflow.log_metrics(
-                    metrics={"eval/loss": eval_loss, "eval/acc": eval_acc}, step=step
-                )
-
-                model.train()
 
             ############ Save Checkpoint
             if (

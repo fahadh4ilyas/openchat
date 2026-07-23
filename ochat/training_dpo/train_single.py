@@ -124,17 +124,33 @@ def create_model(args):
     return model, optimizer
 
 
-def _forward_and_logp(model, batch_tensor, batch_info, args, all_numseq):
-    """Run model forward and return per-example sum of log-probs over response tokens."""
-    return model(
-        **batch_tensor,
-        **batch_info,
-        num_seq=all_numseq,
-        return_per_seq_logps=True,
-        chunk_size=args.chunk_size,
-        use_fast_norm=args.use_fast_norm,
-        use_fast_rope=args.use_fast_rope,
-    ).logits
+def _eval_loop(model, eval_loader, args, eval_epoch):
+    model.eval()
+    eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)
+    eval_total_steps = 0
+
+    eval_loader.set_epoch(eval_epoch)
+    with torch.inference_mode():
+        for (chosen_t, rejected_t, chosen_ref, rejected_ref, batch_info), num_seq in eval_loader:
+            chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+            rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
+            chosen_ref = chosen_ref.to(args.device)
+            rejected_ref = rejected_ref.to(args.device)
+
+            combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
+            per_seq_logps = model(
+                **combined_t, **batch_info,
+                num_seq=0, return_per_seq_logps=True,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
+            chosen_logp = per_seq_logps[:num_chosen]
+            rejected_logp = per_seq_logps[num_chosen:]
+            eval_loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
+            eval_total_loss.add_(eval_loss)
+            eval_total_steps += 1
+
+    return eval_total_loss / eval_total_steps, eval_epoch + 1
 
 
 @mlflow_stopper_wrapper(is_distributed=False)
@@ -149,8 +165,6 @@ def train(args):
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
 
     ref_logps_precomputed = check_ref_logps_precomputed(train_dataset)
-    if not ref_logps_precomputed:
-        print("Reference log-probs not precomputed — will compute online (disabling LoRA adapters)")
 
     train_loader = create_distributed_dataloader(args, train_dataset)
     if args.max_steps > 0:
@@ -179,6 +193,22 @@ def train(args):
     mlflow.log_params(metadata)
 
     model, optimizer = create_model(args)
+
+    # Precompute reference log-probs if not already in dataset
+    if not ref_logps_precomputed:
+        from ochat.training_utils.base_train import ensure_dpo_ref_logps_cached
+        chosen_cache, rejected_cache = ensure_dpo_ref_logps_cached(
+            model, train_dataset, args, "train"
+        )
+        train_dataset.dataset["chosen_ref_logp"] = chosen_cache
+        train_dataset.dataset["rejected_ref_logp"] = rejected_cache
+        if eval_dataset is not None:
+            chosen_ecache, rejected_ecache = ensure_dpo_ref_logps_cached(
+                model, eval_dataset, args, "eval"
+            )
+            eval_dataset.dataset["chosen_ref_logp"] = chosen_ecache
+            eval_dataset.dataset["rejected_ref_logp"] = rejected_ecache
+
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 
     progress_bar = tqdm.tqdm(total=train_total_steps)
@@ -207,16 +237,8 @@ def train(args):
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
-            # Reference log-probs: precomputed in dataset, or online via frozen base model
-            if ref_logps_precomputed:
-                chosen_ref = chosen_ref.to(args.device)
-                rejected_ref = rejected_ref.to(args.device)
-            else:
-                model.disable_adapter_layers()
-                with torch.no_grad():
-                    chosen_ref = _forward_and_logp(model, chosen_t, batch_info, args, num_seq)
-                    rejected_ref = _forward_and_logp(model, rejected_t, batch_info, args, num_seq)
-                model.enable_adapter_layers()
+            chosen_ref = chosen_ref.to(args.device)
+            rejected_ref = rejected_ref.to(args.device)
 
             # Combine chosen + rejected → single forward + split per-seq log-probs
             combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
@@ -224,7 +246,6 @@ def train(args):
                 **combined_t, **batch_info,
                 num_seq=0,
                 return_per_seq_logps=True,
-                chunk_size=args.chunk_size,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).logits
@@ -277,43 +298,8 @@ def train(args):
                 (args.eval_strategy == "epoch" and args.eval_every and ((epoch + 1) % args.eval_every == 0))
             ):
                 model.eval()
-                eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)
-                eval_total_steps = 0
-
-                eval_loader.set_epoch(eval_epoch)
-                with torch.inference_mode():
-                    for (chosen_t, rejected_t, chosen_ref, rejected_ref, batch_info), num_seq in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
-
-                        if ref_logps_precomputed:
-                            chosen_ref = chosen_ref.to(args.device)
-                            rejected_ref = rejected_ref.to(args.device)
-                        else:
-                            model.disable_adapter_layers()
-                            chosen_ref = _forward_and_logp(model, chosen_t, batch_info, args, num_seq)
-                            rejected_ref = _forward_and_logp(model, rejected_t, batch_info, args, num_seq)
-                            model.enable_adapter_layers()
-
-                        combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-                        per_seq_logps = model(
-                            **combined_t, **batch_info,
-                            num_seq=0,
-                            return_per_seq_logps=True,
-                            chunk_size=args.chunk_size,
-                            use_fast_norm=args.use_fast_norm,
-                            use_fast_rope=args.use_fast_rope,
-                        ).logits
-
-                        chosen_logp = per_seq_logps[:num_chosen]
-                        rejected_logp = per_seq_logps[num_chosen:]
-                        eval_loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
-
-                        eval_total_loss.add_(eval_loss)
-                        eval_total_steps += 1
-
-                eval_epoch += 1
-                mlflow.log_metrics(metrics={"eval/loss": (eval_total_loss / eval_total_steps).item()}, step=step)
+                eval_loss, eval_epoch = _eval_loop(model, eval_loader, args, eval_epoch)
+                mlflow.log_metrics(metrics={"eval/loss": eval_loss.item()}, step=step)
                 model.train()
 
             if ((step == train_total_steps) or (epoch + 1 == args.epochs) or

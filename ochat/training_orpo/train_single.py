@@ -127,6 +127,44 @@ def create_model(args, base_lr: float):
     return model, optimizer
 
 
+def _eval_loop(model, eval_loader, args, eval_epoch):
+    """Run one evaluation pass, return (sft_loss, orpo_loss, total_loss, next_epoch)."""
+    eval_total_sft = torch.zeros((), dtype=torch.float32, device=args.device)
+    eval_total_orpo = torch.zeros((), dtype=torch.float32, device=args.device)
+    eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)
+    eval_total_steps = 0
+
+    eval_loader.set_epoch(eval_epoch)
+    with torch.inference_mode():
+        for (chosen_t, rejected_t, batch_info), num_seq in eval_loader:
+            chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
+            rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
+
+            combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
+            per_seq_logps = model(
+                **combined_t, **batch_info,
+                num_seq=0,
+                return_per_seq_logps=True,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
+
+            resp_tokens = _per_seq_response_tokens(combined_t)
+            chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
+            rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
+            sft_loss = -chosen_logp.mean()
+            orpo = orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
+            eval_total_sft.add_(sft_loss)
+            eval_total_orpo.add_(orpo)
+            eval_total_loss.add_(sft_loss + orpo)
+            eval_total_steps += 1
+
+    return (eval_total_sft / eval_total_steps,
+            eval_total_orpo / eval_total_steps,
+            eval_total_loss / eval_total_steps,
+            eval_epoch + 1)
+
+
 @mlflow_stopper_wrapper(is_distributed=False)
 def train(args):
     train_dataset = create_dataset(args, "train")
@@ -202,7 +240,7 @@ def train(args):
                 **combined_t, **batch_info,
                 num_seq=0,
                 return_per_seq_logps=True,
-                chunk_size=args.chunk_size,
+                
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
             ).logits
@@ -230,6 +268,7 @@ def train(args):
                 metrics={
                     "train/loss": loss.item(),
                     "train/sft_loss": (-chosen_logp.mean()).item(),
+                    "train/orpo_loss": (loss.item() - (-chosen_logp.mean()).item()),
                     "train/lr": lr_this_step,
                     "train/epoch": args.epochs * step / train_total_steps,
                 },
@@ -257,35 +296,15 @@ def train(args):
                 (args.eval_strategy == "epoch" and args.eval_every and ((epoch + 1) % args.eval_every == 0))
             ):
                 model.eval()
-                eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)
-                eval_total_steps = 0
-
-                eval_loader.set_epoch(eval_epoch)
-                with torch.inference_mode():
-                    for (chosen_t, rejected_t, batch_info), num_seq in eval_loader:
-                        chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in chosen_t.items()}
-                        rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
-
-                        combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-                        per_seq_logps = model(
-                            **combined_t, **batch_info,
-                            num_seq=0,
-                            return_per_seq_logps=True,
-                            chunk_size=args.chunk_size,
-                            use_fast_norm=args.use_fast_norm,
-                            use_fast_rope=args.use_fast_rope,
-                        ).logits
-
-                        chosen_logp = per_seq_logps[:num_chosen]
-                        rejected_logp = per_seq_logps[num_chosen:]
-                        eval_loss = -chosen_logp.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
-
-                        eval_total_loss.add_(eval_loss)
-                        eval_total_steps += 1
-
-                eval_epoch += 1
+                eval_sft, eval_orpo, eval_loss, eval_epoch = _eval_loop(
+                    model, eval_loader, args, eval_epoch
+                )
                 mlflow.log_metrics(
-                    metrics={"eval/loss": (eval_total_loss / eval_total_steps).item()},
+                    metrics={
+                        "eval/loss": eval_loss.item(),
+                        "eval/sft_loss": eval_sft.item(),
+                        "eval/orpo_loss": eval_orpo.item(),
+                    },
                     step=step,
                 )
                 model.train()
