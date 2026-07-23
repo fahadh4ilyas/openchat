@@ -355,7 +355,7 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
 
     with torch.no_grad():
         for i in range(num_examples):
-            example = dataset[i]
+            example = dataset[[i]]  # list index preserves batch structure
 
             chosen_t, chosen_info = batch_to_tensor(example, prefix="chosen_")
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v)
