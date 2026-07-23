@@ -100,14 +100,7 @@ def load_balancing_loss_func(
     return overall_loss * num_experts
 
 
-@torch.compile  # type: ignore
-def weighted_token_accuracy(
-    logits: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor
-):
-    return (weights * (torch.argmax(logits, dim=-1) == labels)).sum()
-
-
-from ochat.training_utils._ce_utils import weighted_cross_entropy
+from ochat.training_utils._ce_utils import weighted_cross_entropy, compute_unpadded_lm_loss
 
 
 @torch.compile  # type: ignore
@@ -572,12 +565,10 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
         nz_shifted_label_ids: Optional[torch.Tensor] = None,
         nz_shifted_loss_weights: Optional[torch.Tensor] = None,
         num_seq: int = 0,
-        chunk_size: int = -1,
         use_fast_norm: bool = False,
         use_fast_rope: bool = False,
         return_per_seq_logps: bool = False,
     ) -> CausalLMOutputWithPast:
-        # Model logits
         hidden_states, router_logits = self.model(
             nz_input_ids=nz_input_ids,
             nz_position_ids=nz_position_ids,
@@ -587,8 +578,6 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
             use_fast_rope=use_fast_rope,
         )
 
-        loss = None
-        per_seq_logps = None
         if nz_shifted_label_ids is not None:
             assert nz_shifted_loss_weights is not None
             max_length = nz_input_ids.shape[0]
@@ -602,71 +591,15 @@ class MixtralForCausalLM(UnpaddedMixtralPreTrainedModel):
                 router_logits, self.num_experts, self.num_experts_per_tok, attn_length=attn_length, max_length=max_length
             )
 
-            total_ce_loss = 0.0
-            total_acc = 0.0
-            
-            if return_per_seq_logps:
-                _num_seq = int(cu_seqlens.shape[0] - 1)
-                _all_token_losses: list = []
-                _all_token_indices: list = []
+            (ce_loss, acc), per_seq_logps = compute_unpadded_lm_loss(
+                hidden_states=hidden_states, cu_seqlens=cu_seqlens,
+                nz_shifted_label_ids=nz_shifted_label_ids,
+                nz_shifted_loss_weights=nz_shifted_loss_weights,
+                lm_head=self.lm_head, num_tokens=num_seq,
+                return_per_seq_logps=return_per_seq_logps,
+            )
 
-            if chunk_size > 0:
-                for i in range(0, hidden_states.size(0), chunk_size):
-                    # Slice chunks
-                    hidden_chunk = hidden_states[i : i + chunk_size]
-                    label_chunk = nz_shifted_label_ids[i : i + chunk_size]
-                    weight_chunk = nz_shifted_loss_weights[i : i + chunk_size]
-                    
-                    # Project only this chunk
-                    logits_chunk = self.lm_head(hidden_chunk)
-                    
-                    # Compute metrics
-                    chunk_ce_loss = weighted_cross_entropy(logits_chunk, label_chunk, weight_chunk)
-                    chunk_acc = weighted_token_accuracy(logits_chunk.detach(), label_chunk, weight_chunk)
-                    
-                    # Accumulate
-                    total_ce_loss += chunk_ce_loss
-                    total_acc += chunk_acc
-                    
-                    # Free VRAM
-                    del logits_chunk
-                    del hidden_chunk
-            else:
-                logits = self.lm_head(hidden_states)
-                if return_per_seq_logps:
-                    token_losses = weighted_cross_entropy(
-                        logits, nz_shifted_label_ids, nz_shifted_loss_weights, reduction="none"
-                    )
-                    total_ce_loss = token_losses.sum()
-                    positions = torch.arange(logits.size(0), device=logits.device)
-                    seq_indices = torch.searchsorted(cu_seqlens, positions, right=True) - 1
-                    _all_token_losses.append(token_losses)
-                    _all_token_indices.append(seq_indices)
-                else:
-                    total_ce_loss = weighted_cross_entropy(logits, nz_shifted_label_ids, nz_shifted_loss_weights)
-                total_acc = weighted_token_accuracy(logits.detach(), nz_shifted_label_ids, nz_shifted_loss_weights)
+            loss = ((ce_loss + aux_loss, aux_loss), acc)
+            return CausalLMOutputWithPast(loss=loss, logits=per_seq_logps)
 
-            if return_per_seq_logps:
-                all_losses = torch.cat(_all_token_losses)
-                all_indices = torch.cat(_all_token_indices)
-                per_seq_loss = torch.zeros(_num_seq, device=all_losses.device, dtype=all_losses.dtype)
-                per_seq_loss.index_add_(0, all_indices, all_losses)
-                per_seq_logps = -per_seq_loss
-
-            if num_seq > 0:
-                final_ce_loss = total_ce_loss / num_seq
-                final_acc = total_acc / num_seq
-                loss = (
-                    (final_ce_loss + aux_loss, aux_loss),
-                    final_acc,
-                )
-            else:
-                loss = (
-                    (total_ce_loss + aux_loss, aux_loss),
-                    total_acc,
-                )
-
-        return CausalLMOutputWithPast(
-            loss=loss,  # type: ignore
-            logits=per_seq_logps,
-        )
+        return CausalLMOutputWithPast(loss=None, logits=None)

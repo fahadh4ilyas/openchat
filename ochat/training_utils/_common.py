@@ -24,8 +24,6 @@ from ochat.config import MODEL_CONFIG_MAP
 from ochat.training_utils.numpy_dataset import NumpyDataset
 
 
-PAD_ID = 0
-
 BATCH_KEYS = {
     "seqlens": torch.long,
     "nz_input_ids": torch.long,
