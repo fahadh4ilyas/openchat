@@ -45,8 +45,9 @@ def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] 
     rejected_tensor, rejected_info = batch_to_tensor(batch, dataset_path, processor, prefix="rejected_")
 
     # Reference log-probs (pre-computed scalars per example)
-    chosen_ref_logps = torch.from_numpy(np.concatenate(batch["chosen_ref_logp"], axis=0)).to(torch.float32)
-    rejected_ref_logps = torch.from_numpy(np.concatenate(batch["rejected_ref_logp"], axis=0)).to(torch.float32)
+    # Handle both formats: object arrays (from parquet) and flat arrays (from cache)
+    chosen_ref_logps = torch.from_numpy(np.asarray(batch["chosen_ref_logp"], dtype=np.float32).ravel())
+    rejected_ref_logps = torch.from_numpy(np.asarray(batch["rejected_ref_logp"], dtype=np.float32).ravel())
 
     # Combined batch info
     batch_info = {
