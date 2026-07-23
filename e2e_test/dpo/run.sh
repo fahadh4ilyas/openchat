@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # ---- Defaults (non-machine-specific) ----
 PYTHON=python
+DEEPSPEED=deepspeed
 MODEL_TYPE=qwen3_5_chatml
 MLFLOW_URI=http://localhost:5000
 BATCH_MAX_LEN=2048
@@ -22,6 +23,7 @@ MODEL_PATH=""
 # ---- Parse CLI overrides ----
 while [[ $# -gt 0 ]]; do case "$1" in
     --python)         PYTHON="$2"; shift 2 ;;
+    --deepspeed)    DEEPSPEED="$2"; shift 2 ;;
     --model-path)     MODEL_PATH="$2"; shift 2 ;;
     --model-type)     MODEL_TYPE="$2"; shift 2 ;;
     --mlflow-uri)     MLFLOW_URI="$2"; shift 2 ;;
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
         echo "  --model-path PATH     Model directory"
         echo "Options:"
         echo "  --python PATH         Python binary (default: $PYTHON)"
+        echo "  --deepspeed PATH      DeepSpeed binary (default: $DEEPSPEED)"
         echo "  --model-type TYPE     Model type for config (default: $MODEL_TYPE)"
         echo "  --mlflow-uri URI      MLflow tracking URI (default: $MLFLOW_URI)"
         echo "  --batch-max-len N     Batch max length (default: $BATCH_MAX_LEN)"
@@ -105,7 +108,7 @@ echo ""
 echo "=== Step 4/4: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_deepspeed_lora
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
-(cd "$REPO_ROOT" && deepspeed --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_dpo.train \
     --model_path "$MODEL_PATH" \
     --data_prefix "$SCRIPT_DIR/pretokenized/dpo_data" \
