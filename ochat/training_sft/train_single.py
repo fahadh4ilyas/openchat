@@ -334,14 +334,9 @@ def train(args: TrainingArguments):
                 eval_epoch += 1
 
             ############ Save Checkpoint
-            if (
-                (step == train_total_steps)
-                or (epoch + 1 == args.epochs)
-                or (
-                    args.save_strategy == "epoch"
-                    and args.save_every
-                    and ((epoch + 1) % args.save_every == 0)
-                )
+            if (args.save_strategy == "epoch"
+                and args.save_every
+                and ((epoch + 1) % args.save_every == 0)
             ):
                 save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
 

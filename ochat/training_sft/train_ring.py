@@ -235,8 +235,7 @@ def train(args):
                 _run_eval(model_engine, eval_loader, args, eval_epoch, step=step)
                 eval_epoch += 1
 
-            if ((step == train_total_steps) or (epoch + 1 == args.epochs) or
-                (args.save_strategy == "epoch" and args.save_every and ((epoch + 1) % args.save_every == 0))):
+            if args.save_strategy == "epoch" and args.save_every and ((epoch + 1) % args.save_every == 0):
                 dist.barrier()
                 save_path = os.path.join(args.save_path, f"ep_{epoch + 1}")
                 save_checkpoint(model_engine, args, save_path, epoch + 1, step, save_tokenizer_too=True)
