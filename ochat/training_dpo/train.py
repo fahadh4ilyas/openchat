@@ -1,9 +1,10 @@
-"""Distributed LoRA DPO training entry point (DeepSpeed).
+"""Distributed DPO training entry point (DeepSpeed).
 
-Only LoRA/QLoRA: the frozen base model serves as the reference model.
-Routes to train_ring if --use_ring is set.
+Supports full fine-tuning when ref log-probs are precomputed; LoRA/QLoRA
+required when computing them at training start (the frozen base model
+serves as the reference model).
 
-base_lr=1e-2 (LoRA adapters converge faster than full fine-tuning).
+base_lr=3e-4 (full FT), 1e-2 (LoRA).
 """
 
 import argparse
@@ -26,6 +27,7 @@ from ochat.training_utils._training_args import (
 from ochat.training_utils._common import (
     combine_chosen_rejected_batch,
     per_seq_response_tokens,
+    _check_ref_logps_ready,
     mlflow_stopper_wrapper,
     get_latest_checkpoint,
     create_dataset,
@@ -43,7 +45,6 @@ from ochat.training_utils.base_train import (
 from ochat.training_dpo.utils import (
     dpo_batch_collate,
     dpo_loss_router,
-    check_ref_logps_precomputed,
 )
 from ochat.training_utils.multipack_dataloader import MultipackDistributedDataloader
 from ochat.training_utils.numpy_dataset import NumpyDataset
@@ -57,8 +58,8 @@ except ImportError:
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """DPO training arguments (LoRA only, base_lr=1e-2)."""
-    base_lr: float = 1e-2
+    """DPO training arguments."""
+    base_lr: float = 3e-4
     dpo_beta: float = 0.1
     loss_type: str = "sigmoid"
     label_smoothing: float = 0.0
@@ -70,7 +71,7 @@ class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--use_ring", action="store_true")
-    add_base_args(parser, base_lr=1e-2)
+    add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO temperature parameter")
     parser.add_argument("--loss_type", type=str, default="sigmoid",
@@ -180,7 +181,23 @@ def train(args):
     args.model_type = train_dataset.metadata["model_type"]
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
 
-    ref_logps_precomputed = check_ref_logps_precomputed(train_dataset)
+    is_lora = args.use_lora or args.use_qlora
+    args.base_lr = 1e-2 if is_lora else args.base_lr
+
+    ref_logps_precomputed = _check_ref_logps_ready(
+        train_dataset, eval_dataset, args,
+        key="chosen_ref_logp",
+        cache_suffix="ref_logps_cache.npz",
+        checksum_keys=["chosen_nz_input_ids", "rejected_nz_input_ids"],
+    )
+
+    if not ref_logps_precomputed and not is_lora:
+        raise RuntimeError(
+            "DPO requires reference log-probs. They were not precomputed during preprocessing "
+            "(use --ref-logps with generate_dpo_dataset.py). "
+            "Without precomputed ref log-probs, training must compute them from the frozen base model, "
+            "which requires LoRA/QLoRA (--use_lora or --use_qlora)."
+        )
 
     train_loader = create_distributed_dataloader(args, train_dataset)
     if args.max_steps > 0:
@@ -355,5 +372,4 @@ if __name__ == "__main__":
     args_dict = vars(args)
     _parse_ds_config(args_dict)
     args = TrainingArguments(**args_dict)
-    args.use_lora = True  # DPO is always LoRA
     train(args)

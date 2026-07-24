@@ -1,9 +1,10 @@
-"""Single-GPU LoRA KTO training entry point.
+"""Single-GPU KTO training entry point.
 
 KTO uses unpaired preference data with a reference model.
-Only LoRA/QLoRA: the frozen base model serves as the reference model.
+Supports full fine-tuning when ref log-probs are precomputed; LoRA/QLoRA
+required when computing them at training start.
 
-base_lr=1e-2 (LoRA adapters converge faster than full fine-tuning).
+base_lr=3e-4 (full FT), 1e-2 (LoRA).
 """
 
 import argparse
@@ -25,6 +26,7 @@ from ochat.training_utils._training_args import (
     add_lora_args,
 )
 from ochat.training_utils._common import (
+    _check_ref_logps_ready,
     mlflow_stopper_wrapper,
     get_latest_checkpoint,
     create_dataset,
@@ -39,7 +41,6 @@ from ochat.training_utils.base_train import ensure_kto_ref_logps_cached
 from ochat.training_kto.utils import (
     kto_batch_collate,
     kto_loss,
-    check_ref_logps_precomputed,
 )
 from ochat.training_utils.multipack_dataloader_single import MultipackDataloader
 from ochat.training_utils.numpy_dataset import NumpyDataset
@@ -48,13 +49,13 @@ from transformers import BitsAndBytesConfig
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """KTO training arguments (LoRA only, base_lr=1e-2)."""
+    """KTO training arguments."""
     kto_beta: float = 0.1
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    add_base_args(parser, base_lr=1e-2)
+    add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
     parser.add_argument("--kto_beta", type=float, default=0.1, help="KTO temperature parameter")
     return parser.parse_args()
@@ -98,15 +99,18 @@ def create_model(args):
     if args.use_qlora:
         model = prepare_model_for_kbit_training(model)
 
-    if model_path == args.model_path:
-        lora_config = LoraConfig(
-            r=args.lora_r, lora_alpha=args.lora_alpha,
-            target_modules=args.lora_target_modules, lora_dropout=args.lora_dropout,
-            bias=args.lora_bias, modules_to_save=args.modules_to_save,
-        )
-        model = get_peft_model(model, lora_config)
-    else:
-        model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
+    is_lora = args.use_lora or args.use_qlora
+
+    if is_lora:
+        if model_path == args.model_path:
+            lora_config = LoraConfig(
+                r=args.lora_r, lora_alpha=args.lora_alpha,
+                target_modules=args.lora_target_modules, lora_dropout=args.lora_dropout,
+                bias=args.lora_bias, modules_to_save=args.modules_to_save,
+            )
+            model = get_peft_model(model, lora_config)
+        else:
+            model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
 
     model = model.to("cuda")
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
@@ -158,7 +162,23 @@ def train(args):
     args.model_type = train_dataset.metadata["model_type"]
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
 
-    ref_logps_precomputed = check_ref_logps_precomputed(train_dataset)
+    is_lora = args.use_lora or args.use_qlora
+    args.base_lr = 1e-2 if is_lora else 3e-4
+
+    ref_logps_precomputed = _check_ref_logps_ready(
+        train_dataset, eval_dataset, args,
+        key="ref_logp",
+        cache_suffix="kto_ref_logps_cache.npz",
+        checksum_keys=["nz_input_ids"],
+    )
+
+    if not ref_logps_precomputed and not is_lora:
+        raise RuntimeError(
+            "KTO requires reference log-probs. They were not precomputed during preprocessing "
+            "(use --ref-logps with --kto in generate_dataset.py). "
+            "Without precomputed ref log-probs, training must compute them from the frozen base model, "
+            "which requires LoRA/QLoRA (--use_lora or --use_qlora)."
+        )
 
     train_loader = create_dataloader(args, train_dataset)
     if args.max_steps > 0:
@@ -297,5 +317,4 @@ def train(args):
 if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
-    args.use_lora = True  # KTO is always LoRA
     train(args)
