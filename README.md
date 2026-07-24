@@ -248,6 +248,15 @@ DPO/ORPO example (paired chosen/rejected):
 
 > DPO and ORPO share the same paired JSONL format. The `weight` field follows the same convention: `0` for user messages, `1` for assistant responses. For more examples, see `e2e_test/dpo/data_dpo.jsonl` and `e2e_test/orpo/data_orpo.jsonl`.
 
+KTO example (unpaired, each line is independently desirable or undesirable):
+
+```json
+{"items":[{"role":"user","content":"What is the capital of France?","weight":0.0},{"role":"assistant","content":"The capital of France is Paris.","weight":1.0}],"label":true,"system":"You are a helpful AI assistant."}
+{"items":[{"role":"user","content":"What is the capital of France?","weight":0.0},{"role":"assistant","content":"France is in Europe.","weight":1.0}],"label":false,"system":"You are a helpful AI assistant."}
+```
+
+> KTO examples follow the same Conversation format as SFT with one extra field: `label` (boolean, defaults to `true`). `true` = desirable response, `false` = undesirable. No pairing — each line is independent. The `convert_dataset.py` tool automatically sets `label: true`; manually flip undesirables to `false`. For more examples, see `e2e_test/kto/data_kto.jsonl`.
+
 #### Converting from OpenAI Format
 
 If your data is in the OpenAI chat-completions format (list of `messages` with `role`/`content`), use the conversion tools to transform it into OpenChat `Conversation` objects. These tools round-trip through the model's tokenizer to correctly handle thinking blocks, tool calls, and other template-specific transformations.
@@ -310,6 +319,19 @@ python -m ochat.data.generate_orpo_dataset \
 
 > ORPO uses the same data format as DPO and always skips reference log-prob computation (they aren't needed).
 
+**KTO:**
+
+```bash
+python -m ochat.data.generate_dataset \
+    --model-type MODEL_TYPE \
+    --model-path BASE_REPO \
+    --in-files data_kto.jsonl \
+    --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
+    --kto --ref-logps
+```
+
+> KTO uses the same `generate_dataset.py` script as SFT with `--kto` (adds `label` + `ref_logp` columns) and `--ref-logps` (opt-in reference log-prob computation). If `--ref-logps` is omitted, training will compute ref log-probs online and cache them to disk.
+
 Key flags for all commands:
 
 | Flag | Description |
@@ -327,6 +349,13 @@ DPO-specific:
 
 | Flag | Description |
 |---|---|
+| `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
+
+KTO-specific:
+
+| Flag | Description |
+|---|---|
+| `--kto` | Enable KTO mode (adds `label` + `ref_logp` columns) |
 | `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
 
 Output files are written as `.parquet` (or `.pickle`) to `PRETOKENIZED_DATA_OUTPUT_PATH.train.parquet` and optionally `.eval.parquet`.
@@ -417,6 +446,15 @@ python -m ochat.training_orpo.train_single \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
     --orpo_beta 0.1
+
+# KTO single-GPU (full FT or LoRA)
+python -m ochat.training_kto.train_single \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 --save_every 1 \
+    --kto_beta 0.1
 ```
 
 > Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
@@ -552,6 +590,37 @@ python -m ochat.data.generate_orpo_dataset \
 
 > `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--orpo_beta` (λ in the paper, default 0.1) controls the odds-ratio penalty weight. Supports all standard checkpointing, eval, and MLflow flags.
 
+#### KTO Training (Kahneman-Tversky Optimization)
+
+KTO uses unpaired preference data — each example is independently labeled desirable or undesirable. No reference model is loaded separately; the frozen base model serves as reference (same pattern as DPO). Supports full fine-tuning, LoRA, and QLoRA.
+
+```bash
+NUM_GPUS=8
+
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 \
+    --save_every 1 \
+    --kto_beta 0.1 \
+    --deepspeed \
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+```
+
+For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+
+Pre-tokenize with:
+
+```bash
+python -m ochat.data.generate_dataset --kto --ref-logps \
+    --model-type MODEL_TYPE --model-path BASE_REPO \
+    --in-files data_kto.jsonl --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
+```
+
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start.
+
 #### Ring Attention for Long Context
 
 Ring attention distributes sequence computation across GPUs, enabling context lengths up to 2¹⁹ tokens. Add `--use_ring` to any training command:
@@ -625,6 +694,12 @@ ORPO-specific:
 |---|---|---|
 | `--orpo_beta` | 0.1 | ORPO odds-ratio penalty weight (λ in the paper) |
 
+KTO-specific:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--kto_beta` | 0.1 | KTO temperature; higher = closer to reference |
+
 > For DeepSpeed ZERO offloading, use `ochat.training_sft.train_offload` as the module and set `"offload_optimizer": true` in the DeepSpeed config.
 
 ## Architecture Notes
@@ -657,7 +732,7 @@ For GPU tests (requires CUDA):
 pytest -m gpu
 ```
 
-End-to-end tests for SFT, DPO, and ORPO training are in `e2e_test/sft/`, `e2e_test/dpo/`, and `e2e_test/orpo/`. These run the full pipeline (convert → tokenize → train) on small datasets:
+End-to-end tests for SFT, DPO, KTO, and ORPO training are in `e2e_test/sft/`, `e2e_test/dpo/`, `e2e_test/kto/`, and `e2e_test/orpo/`. These run the full pipeline (convert → tokenize → train) on small datasets:
 
 ```bash
 # SFT
