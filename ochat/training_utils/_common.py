@@ -61,17 +61,20 @@ def check_ref_logps_precomputed(
             (DPO: ['chosen_nz_input_ids', 'rejected_nz_input_ids'],
              KTO: ['nz_input_ids']). Required if cache_paths is given.
     """
-    precomputed = dataset.metadata.get("ref_logps_computed", None)
-    if precomputed is not None:
-        return precomputed
+    precomputed = dataset.metadata.get("ref_logps_computed")
+    if precomputed:
+        return True
 
     if cache_paths and checksum_keys:
         expected = _compute_dataset_checksum(dataset, checksum_keys)
         for path in cache_paths:
             if not os.path.isfile(path):
+                print(f"  Cache file not found: {path}")
                 return False
             cached = np.load(path, allow_pickle=True)
-            if str(cached.get("checksum", "")) != expected:
+            actual = str(cached.get("checksum", ""))
+            if actual != expected:
+                print(f"  Checksum mismatch for {path}: cached={actual}, computed={expected}")
                 return False
         return True
 
@@ -115,11 +118,13 @@ def _check_ref_logps_ready(
         splits.append(("eval", eval_dataset))
 
     for split_name, dataset in splits:
+        path = f"{args.data_prefix}.{split_name}.{cache_suffix}"
         if not check_ref_logps_precomputed(
             dataset, key=key,
-            cache_paths=[f"{args.data_prefix}.{split_name}.{cache_suffix}"],
+            cache_paths=[path],
             checksum_keys=checksum_keys,
         ):
+            print(f"[{split_name}] Ref log-probs not available (metadata/cache/NaN check failed — path: {path})")
             return False
     return True
 
