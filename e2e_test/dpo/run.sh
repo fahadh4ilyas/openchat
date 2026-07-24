@@ -63,7 +63,7 @@ rm -rf converted pretokenized output
 mkdir -p converted pretokenized output
 
 # ---- Step 1: Convert ----
-echo "=== Step 1/5: Convert OpenAI paired JSONL → Conversation format ==="
+echo "=== Step 1/7: Convert OpenAI paired JSONL → Conversation format ==="
 $PYTHON -m ochat.data.convert_dataset_dpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -73,7 +73,7 @@ echo "  → $(wc -l < converted/train_dpo.jsonl) pairs"
 
 # ---- Step 2: Tokenize (skip ref log-probs for speed) ----
 echo ""
-echo "=== Step 2/5: Tokenize → parquet ==="
+echo "=== Step 2/7: Tokenize → parquet ==="
 $PYTHON -m ochat.data.generate_dpo_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -88,16 +88,32 @@ echo "  → eval:  $(ls -lh pretokenized/dpo_data.eval.parquet)"
 
 # ---- Step 3: Cache ref log-probs (standalone, enables full FT) ----
 echo ""
-echo "=== Step 3/5: Cache reference log-probs ==="
+echo "=== Step 3/7: Cache reference log-probs ==="
 $PYTHON -m ochat.data.cache_ref_logps \
     --data-prefix pretokenized/dpo_data \
     --model-path "$MODEL_PATH"
 echo "  → train cache: $(ls -lh pretokenized/dpo_data.train.ref_logps_cache.npz)"
 echo "  → eval cache:  $(ls -lh pretokenized/dpo_data.eval.ref_logps_cache.npz)"
 
-# ---- Step 4: Single-GPU LoRA (DPO is always LoRA) ----
+# ---- Step 4: Single-GPU full FT ----
 echo ""
-echo "=== Step 4/5: Single-GPU DPO LoRA (${MAX_STEPS} steps) ==="
+echo "=== Step 4/7: Single-GPU DPO full FT (${MAX_STEPS} steps) ==="
+rm -rf output/dpo_full_ft
+$PYTHON -m ochat.training_dpo.train_single \
+    --local_rank 0 \
+    --model_path "$MODEL_PATH" \
+    --data_prefix pretokenized/dpo_data \
+    --save_path output/dpo_full_ft \
+    --batch_max_len "$BATCH_MAX_LEN" \
+    --epochs 1 --max_steps "$MAX_STEPS" \
+    --dpo_beta "$DPO_BETA" \
+    --experiment_name e2e_dpo --run_name dpo_full_ft \
+    --tracking_uri "$MLFLOW_URI"
+echo "  → output/dpo_full_ft/"
+
+# ---- Step 5: Single-GPU LoRA ----
+echo ""
+echo "=== Step 5/7: Single-GPU DPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_lora
 $PYTHON -m ochat.training_dpo.train_single \
     --local_rank 0 \
@@ -106,16 +122,34 @@ $PYTHON -m ochat.training_dpo.train_single \
     --save_path output/dpo_lora \
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
+    --use_lora \
     --dpo_beta "$DPO_BETA" \
     --experiment_name e2e_dpo --run_name dpo_lora \
     --tracking_uri "$MLFLOW_URI"
 echo "  → output/dpo_lora/"
 
-# ---- Step 4: DeepSpeed LoRA (DPO is always LoRA) ----
+# ---- Step 6: DeepSpeed full FT ----
 echo ""
-echo "=== Step 5/5: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
-rm -rf output/dpo_deepspeed_lora
+echo "=== Step 6/7: DeepSpeed DPO full FT (${MAX_STEPS} steps) ==="
+rm -rf output/dpo_deepspeed_ft
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+    --module ochat.training_dpo.train \
+    --model_path "$MODEL_PATH" \
+    --data_prefix "$SCRIPT_DIR/pretokenized/dpo_data" \
+    --save_path "$SCRIPT_DIR/output/dpo_deepspeed_ft" \
+    --batch_max_len "$BATCH_MAX_LEN" \
+    --epochs 1 --max_steps "$MAX_STEPS" \
+    --dpo_beta "$DPO_BETA" \
+    --deepspeed --deepspeed_config "$DS_CONFIG" \
+    --experiment_name e2e_dpo --run_name dpo_deepspeed_ft \
+    --tracking_uri "$MLFLOW_URI")
+echo "  → output/dpo_deepspeed_ft/"
+
+# ---- Step 7: DeepSpeed LoRA ----
+echo ""
+echo "=== Step 7/7: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
+rm -rf output/dpo_deepspeed_lora
 (cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_dpo.train \
     --model_path "$MODEL_PATH" \
@@ -123,6 +157,7 @@ DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
     --save_path "$SCRIPT_DIR/output/dpo_deepspeed_lora" \
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
+    --use_lora \
     --dpo_beta "$DPO_BETA" \
     --deepspeed --deepspeed_config "$DS_CONFIG" \
     --experiment_name e2e_dpo --run_name dpo_deepspeed_lora \
@@ -132,6 +167,8 @@ echo "  → output/dpo_deepspeed_lora/"
 # ---- Done ----
 echo ""
 echo "=== All done ==="
+echo "DPO full FT:          output/dpo_full_ft/"
 echo "DPO LoRA:             output/dpo_lora/"
+echo "DPO DeepSpeed FT:     output/dpo_deepspeed_ft/"
 echo "DPO DeepSpeed LoRA:   output/dpo_deepspeed_lora/"
 echo "MLflow:               $MLFLOW_URI (experiment: e2e_dpo)"
