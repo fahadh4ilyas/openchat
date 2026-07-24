@@ -87,43 +87,43 @@ $PYTHON -m ochat.data.generate_dataset \
 echo "  → train: $(ls -lh pretokenized/kto_data.train.parquet)"
 echo "  → eval:  $(ls -lh pretokenized/kto_data.eval.parquet)"
 
-# ---- Step 4: Single-GPU ----
+# ---- Step 3: Single-GPU LoRA (KTO is always LoRA) ----
 echo ""
-echo "=== Step 3/4: Single-GPU KTO (${MAX_STEPS} steps) ==="
-rm -rf output/kto_single
+echo "=== Step 3/4: Single-GPU KTO LoRA (${MAX_STEPS} steps) ==="
+rm -rf output/kto_lora
 $PYTHON -m ochat.training_kto.train_single \
     --local_rank 0 \
     --model_path "$MODEL_PATH" \
     --data_prefix pretokenized/kto_data \
-    --save_path output/kto_single \
+    --save_path output/kto_lora \
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
     --kto_beta "$KTO_BETA" \
-    --experiment_name e2e_kto --run_name kto_single \
+    --experiment_name e2e_kto --run_name kto_lora \
     --tracking_uri "$MLFLOW_URI"
-echo "  → output/kto_single/"
+echo "  → output/kto_lora/"
 
-# ---- Step 5: DeepSpeed ----
+# ---- Step 4: DeepSpeed LoRA (KTO is always LoRA) ----
 echo ""
-echo "=== Step 4/4: DeepSpeed KTO (${MAX_STEPS} steps) ==="
-rm -rf output/kto_deepspeed
+echo "=== Step 4/4: DeepSpeed KTO LoRA (${MAX_STEPS} steps) ==="
+rm -rf output/kto_deepspeed_lora
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
 (cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_kto.train \
     --model_path "$MODEL_PATH" \
     --data_prefix "$SCRIPT_DIR/pretokenized/kto_data" \
-    --save_path "$SCRIPT_DIR/output/kto_deepspeed" \
+    --save_path "$SCRIPT_DIR/output/kto_deepspeed_lora" \
     --batch_max_len "$BATCH_MAX_LEN" \
     --epochs 1 --max_steps "$MAX_STEPS" \
     --kto_beta "$KTO_BETA" \
     --deepspeed --deepspeed_config "$DS_CONFIG" \
-    --experiment_name e2e_kto --run_name kto_deepspeed \
+    --experiment_name e2e_kto --run_name kto_deepspeed_lora \
     --tracking_uri "$MLFLOW_URI")
-echo "  → output/kto_deepspeed/"
+echo "  → output/kto_deepspeed_lora/"
 
 # ---- Done ----
 echo ""
 echo "=== All done ==="
-echo "KTO single-GPU:       output/kto_single/"
-echo "KTO DeepSpeed:        output/kto_deepspeed/"
+echo "KTO LoRA:             output/kto_lora/"
+echo "KTO DeepSpeed LoRA:   output/kto_deepspeed_lora/"
 echo "MLflow:               $MLFLOW_URI (experiment: e2e_kto)"

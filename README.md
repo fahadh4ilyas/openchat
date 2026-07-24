@@ -452,14 +452,14 @@ python -m ochat.training_orpo.train_single \
     --epochs 5 --save_every 1 \
     --orpo_beta 0.1
 
-# KTO single-GPU (full FT or LoRA)
+# KTO single-GPU (LoRA only)
 python -m ochat.training_kto.train_single \
     --model_path BASE_REPO \
     --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
     --save_path PATH_TO_SAVE_MODEL \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
-    --kto_beta 0.1
+    --use_lora --kto_beta 0.1
 ```
 
 > Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
@@ -597,7 +597,7 @@ python -m ochat.data.generate_orpo_dataset \
 
 #### KTO Training (Kahneman-Tversky Optimization)
 
-KTO uses unpaired preference data — each example is independently labeled desirable or undesirable. No reference model is loaded separately; the frozen base model serves as reference (same pattern as DPO). Supports full fine-tuning, LoRA, and QLoRA.
+KTO uses unpaired preference data — each example is independently labeled desirable or undesirable. LoRA/QLoRA only: the frozen base model serves as the reference (same pattern as DPO).
 
 ```bash
 NUM_GPUS=8
@@ -609,12 +609,16 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --batch_max_len BATCH_SIZE \
     --epochs 5 \
     --save_every 1 \
+    --use_lora \
+    --lora_r 32 \
+    --lora_alpha 32 \
+    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
     --kto_beta 0.1 \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+> `base_lr` defaults to 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start. Use `--use_qlora` for QLoRA, `--use_ring` for ring attention.
 
 Pre-tokenize with:
 
@@ -623,8 +627,6 @@ python -m ochat.data.generate_dataset --kto --ref-logps \
     --model-type MODEL_TYPE --model-path BASE_REPO \
     --in-files data_kto.jsonl --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
 ```
-
-> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start.
 
 #### Ring Attention for Long Context
 

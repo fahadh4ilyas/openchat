@@ -355,4 +355,5 @@ if __name__ == "__main__":
     args_dict = vars(args)
     _parse_ds_config(args_dict)
     args = TrainingArguments(**args_dict)
+    args.use_lora = True  # DPO is always LoRA
     train(args)

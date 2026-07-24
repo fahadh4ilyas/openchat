@@ -1,9 +1,9 @@
-"""Ring-attention KTO training entry point.
+"""Ring-attention LoRA KTO training entry point.
 
 Uses ring-attention to split long sequences across GPUs.
-Supports full fine-tuning, LoRA, and QLoRA.
+Only LoRA/QLoRA: the frozen base model serves as the reference model.
 
-base_lr=3e-4 (full FT), 1e-2 (LoRA).
+base_lr=1e-2 (LoRA adapters converge faster than full fine-tuning).
 """
 
 import argparse
@@ -56,13 +56,13 @@ except ImportError:
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """Ring-attention KTO training arguments."""
+    """Ring-attention KTO training arguments (LoRA only, base_lr=1e-2)."""
     kto_beta: float = 0.1
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    add_base_args(parser, base_lr=3e-4)
+    add_base_args(parser, base_lr=1e-2)
     add_lora_args(parser)
     parser.add_argument("--kto_beta", type=float, default=0.1, help="KTO temperature parameter")
     parser = deepspeed.add_config_arguments(parser)
@@ -129,9 +129,6 @@ def train(args):
 
     args.model_type = train_dataset.metadata["model_type"]
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
-
-    is_lora = args.use_lora or args.use_qlora
-    args.base_lr = 1e-2 if is_lora else args.base_lr
 
     ref_logps_precomputed = check_ref_logps_precomputed(train_dataset)
 
@@ -268,4 +265,5 @@ if __name__ == "__main__":
     args_dict = vars(args)
     _parse_ds_config(args_dict)
     args = TrainingArguments(**args_dict)
+    args.use_lora = True  # KTO is always LoRA
     train(args)

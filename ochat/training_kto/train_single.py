@@ -1,9 +1,9 @@
-"""Single-GPU KTO training entry point.
+"""Single-GPU LoRA KTO training entry point.
 
 KTO uses unpaired preference data with a reference model.
-Supports full fine-tuning, LoRA, and QLoRA.
+Only LoRA/QLoRA: the frozen base model serves as the reference model.
 
-base_lr=3e-4 (full FT), 1e-2 (LoRA).
+base_lr=1e-2 (LoRA adapters converge faster than full fine-tuning).
 """
 
 import argparse
@@ -48,13 +48,13 @@ from transformers import BitsAndBytesConfig
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """KTO training arguments."""
+    """KTO training arguments (LoRA only, base_lr=1e-2)."""
     kto_beta: float = 0.1
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    add_base_args(parser, base_lr=3e-4)
+    add_base_args(parser, base_lr=1e-2)
     add_lora_args(parser)
     parser.add_argument("--kto_beta", type=float, default=0.1, help="KTO temperature parameter")
     return parser.parse_args()
@@ -98,17 +98,15 @@ def create_model(args):
     if args.use_qlora:
         model = prepare_model_for_kbit_training(model)
 
-    is_lora = args.use_lora or args.use_qlora
-    if is_lora:
-        if model_path == args.model_path:
-            lora_config = LoraConfig(
-                r=args.lora_r, lora_alpha=args.lora_alpha,
-                target_modules=args.lora_target_modules, lora_dropout=args.lora_dropout,
-                bias=args.lora_bias, modules_to_save=args.modules_to_save,
-            )
-            model = get_peft_model(model, lora_config)
-        else:
-            model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
+    if model_path == args.model_path:
+        lora_config = LoraConfig(
+            r=args.lora_r, lora_alpha=args.lora_alpha,
+            target_modules=args.lora_target_modules, lora_dropout=args.lora_dropout,
+            bias=args.lora_bias, modules_to_save=args.modules_to_save,
+        )
+        model = get_peft_model(model, lora_config)
+    else:
+        model = PeftModel.from_pretrained(model, model_path, is_trainable=True)
 
     model = model.to("cuda")
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": True})
@@ -159,9 +157,6 @@ def train(args):
 
     args.model_type = train_dataset.metadata["model_type"]
     args.has_processor = MODEL_CONFIG_MAP[args.model_type].model_has_processor
-
-    is_lora = args.use_lora or args.use_qlora
-    args.base_lr = 1e-2 if is_lora else 3e-4
 
     ref_logps_precomputed = check_ref_logps_precomputed(train_dataset)
 
@@ -302,4 +297,5 @@ def train(args):
 if __name__ == "__main__":
     args = parse_args()
     args = TrainingArguments(**vars(args))
+    args.use_lora = True  # KTO is always LoRA
     train(args)
