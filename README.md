@@ -288,6 +288,18 @@ python -m ochat.data.convert_dataset_dpo \
 
 > Both converters require a `chatml` model type (e.g. `qwen3_5_chatml`). Multi-turn conversations are split at each weighted assistant turn. The DPO converter aligns chosen/rejected non-assistant messages and takes the union of turn positions. Use `--max-workers` to control parallelism.
 
+**KTO conversion** — single conversations with `"label"` field:
+
+```bash
+python -m ochat.data.convert_dataset_kto \
+    --model-type MODEL_TYPE_chatml \
+    --model-path BASE_REPO \
+    --in-files openai_data.jsonl \
+    --out-file openchat_kto_data.jsonl
+```
+
+> KTO input JSONL: `{"messages": [...], "label": true}` for desirable, `"label": false` for undesirable. Uses the same converter as SFT; label defaults to `true` if omitted.
+
 ### Pre-tokenizing the Dataset
 
 You'll then need to pre-tokenize the dataset using the command (please specify a filename as `PRETOKENIZED_DATA_OUTPUT_PATH` to store the pretokenized dataset):
@@ -327,15 +339,15 @@ python -m ochat.data.generate_orpo_dataset \
 **KTO:**
 
 ```bash
-python -m ochat.data.generate_dataset \
+python -m ochat.data.generate_kto_dataset \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_kto.jsonl \
     --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
-    --kto --ref-logps
+    --ref-logps
 ```
 
-> KTO uses the same `generate_dataset.py` script as SFT with `--kto` (adds `label` + `ref_logp` columns) and `--ref-logps` (opt-in reference log-prob computation). If `--ref-logps` is omitted, training will compute ref log-probs online and cache them to disk.
+> KTO uses `generate_kto_dataset.py` (a thin wrapper around `generate_dataset.py --kto`) which adds `label` + `ref_logp` columns. `--ref-logps` is opt-in reference log-prob computation. If omitted, training will compute ref log-probs online via LoRA.
 
 Key flags for all commands:
 
@@ -364,6 +376,17 @@ KTO-specific:
 | `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
 
 Output files are written as `.parquet` (or `.pickle`) to `PRETOKENIZED_DATA_OUTPUT_PATH.train.parquet` and optionally `.eval.parquet`.
+
+> If you pre-tokenized without `--ref-logps`, you can still precompute reference
+> log-probs later using the standalone cache script (useful when you want to use
+> full fine-tuning instead of LoRA):
+>
+> ```bash
+> python -m ochat.data.cache_ref_logps --data-prefix PRETOKENIZED_DATA_PATH --model-path BASE_REPO
+> ```
+>
+> This auto-detects DPO vs KTO format and saves cache files that training
+> scripts will load automatically.
 
 ### Training
 
@@ -425,7 +448,7 @@ python -m ochat.training_sft.train_single \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1
 
-# DPO single-GPU (LoRA only)
+# DPO single-GPU
 python -m ochat.training_dpo.train_single \
     --model_path BASE_REPO \
     --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
@@ -433,6 +456,7 @@ python -m ochat.training_dpo.train_single \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
     --dpo_beta 0.1
+# Add --use_lora for LoRA (required if ref log-probs not precomputed)
 
 # CPO single-GPU (DPO + SFT term)
 python -m ochat.training_dpo.train_single \
@@ -442,6 +466,7 @@ python -m ochat.training_dpo.train_single \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
     --dpo_beta 0.1 --cpo_alpha 1.0
+# Add --use_lora for LoRA (required if ref log-probs not precomputed)
 
 # ORPO single-GPU (full FT or LoRA)
 python -m ochat.training_orpo.train_single \
@@ -452,7 +477,7 @@ python -m ochat.training_orpo.train_single \
     --epochs 5 --save_every 1 \
     --orpo_beta 0.1
 
-# KTO single-GPU (LoRA only)
+# KTO single-GPU
 python -m ochat.training_kto.train_single \
     --model_path BASE_REPO \
     --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
@@ -460,13 +485,14 @@ python -m ochat.training_kto.train_single \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
     --kto_beta 0.1
+# Add --use_lora for LoRA (required if ref log-probs not precomputed)
 ```
 
 > Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
 
 #### DPO Training
 
-DPO training is LoRA/QLoRA only. The frozen base model serves as the reference — no separate model copy is needed. Data format and pre-tokenization are covered above.
+DPO training supports full fine-tuning when ref log-probs are precomputed (`--ref-logps` during preprocessing); LoRA/QLoRA required when they need to be computed at training start (the frozen base model serves as reference).
 
 ```bash
 NUM_GPUS=8
@@ -479,14 +505,13 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --epochs 5 \
     --save_every 1 \
     --dpo_beta 0.1 \
-    --lora_r 32 \
-    --lora_alpha 32 \
-    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT. `base_lr` defaults to `1e-2`.
+For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT.
 
 ##### CPO (Contrastive Preference Optimization)
 
@@ -504,9 +529,6 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --save_every 1 \
     --dpo_beta 0.1 \
     --cpo_alpha 1.0 \
-    --lora_r 32 \
-    --lora_alpha 32 \
-    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
@@ -595,7 +617,7 @@ python -m ochat.data.generate_orpo_dataset \
 
 #### KTO Training (Kahneman-Tversky Optimization)
 
-KTO uses unpaired preference data — each example is independently labeled desirable or undesirable. LoRA/QLoRA only: the frozen base model serves as the reference (same pattern as DPO).
+KTO uses unpaired preference data — each example is independently labeled desirable or undesirable. Supports full fine-tuning when ref log-probs are precomputed; LoRA/QLoRA required when they need to be computed at training start (the frozen base model serves as reference).
 
 ```bash
 NUM_GPUS=8
@@ -607,15 +629,14 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --batch_max_len BATCH_SIZE \
     --epochs 5 \
     --save_every 1 \
-    --lora_r 32 \
-    --lora_alpha 32 \
-    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
     --kto_beta 0.1 \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> `base_lr` defaults to 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start. Use `--use_qlora` for QLoRA, `--use_ring` for ring attention.
+For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start (requires LoRA).
 
 Pre-tokenize with:
 
@@ -665,7 +686,7 @@ Common flags across all training modes:
 | `--eval_strategy` | epoch | `epoch` or `step` |
 | `--eval_every` | *required* | Eval interval in epochs or steps |
 | **LoRA / QLoRA** |||
-| `--use_lora` | false | Enable LoRA fine-tuning (force to true for DPO and KTO) |
+| `--use_lora` | false | Enable LoRA fine-tuning (required for DPO/KTO if ref log-probs not precomputed) |
 | `--use_qlora` | false | Enable QLoRA (4-bit or 8-bit quantization) |
 | `--lora_r` | 32 | LoRA rank |
 | `--lora_alpha` | 32 | LoRA scaling factor |
