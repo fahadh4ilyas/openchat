@@ -73,7 +73,7 @@ echo "  → $(wc -l < converted/train_kto.jsonl) examples ($(grep -c '"label":tr
 
 # ---- Step 2: Tokenize ----
 echo ""
-echo "=== Step 2/4: Tokenize → parquet (--kto) ==="
+echo "=== Step 2/5: Tokenize → parquet (--kto) ==="
 $PYTHON -m ochat.data.generate_kto_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -86,9 +86,18 @@ $PYTHON -m ochat.data.generate_kto_dataset \
 echo "  → train: $(ls -lh pretokenized/kto_data.train.parquet)"
 echo "  → eval:  $(ls -lh pretokenized/kto_data.eval.parquet)"
 
-# ---- Step 3: Single-GPU LoRA (KTO is always LoRA) ----
+# ---- Step 3: Cache ref log-probs (standalone, enables full FT) ----
 echo ""
-echo "=== Step 3/4: Single-GPU KTO LoRA (${MAX_STEPS} steps) ==="
+echo "=== Step 3/5: Cache reference log-probs ==="
+$PYTHON -m ochat.data.cache_ref_logps \
+    --data-prefix pretokenized/kto_data \
+    --model-path "$MODEL_PATH"
+echo "  → train cache: $(ls -lh pretokenized/kto_data.train.kto_ref_logps_cache.npz)"
+echo "  → eval cache:  $(ls -lh pretokenized/kto_data.eval.kto_ref_logps_cache.npz)"
+
+# ---- Step 4: Single-GPU LoRA (KTO is always LoRA) ----
+echo ""
+echo "=== Step 4/5: Single-GPU KTO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/kto_lora
 $PYTHON -m ochat.training_kto.train_single \
     --local_rank 0 \
@@ -102,9 +111,9 @@ $PYTHON -m ochat.training_kto.train_single \
     --tracking_uri "$MLFLOW_URI"
 echo "  → output/kto_lora/"
 
-# ---- Step 4: DeepSpeed LoRA (KTO is always LoRA) ----
+# ---- Step 5: DeepSpeed LoRA (KTO is always LoRA) ----
 echo ""
-echo "=== Step 4/4: DeepSpeed KTO LoRA (${MAX_STEPS} steps) ==="
+echo "=== Step 5/5: DeepSpeed KTO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/kto_deepspeed_lora
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
 (cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \

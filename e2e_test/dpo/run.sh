@@ -63,7 +63,7 @@ rm -rf converted pretokenized output
 mkdir -p converted pretokenized output
 
 # ---- Step 1: Convert ----
-echo "=== Step 1/4: Convert OpenAI paired JSONL → Conversation format ==="
+echo "=== Step 1/5: Convert OpenAI paired JSONL → Conversation format ==="
 $PYTHON -m ochat.data.convert_dataset_dpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -73,7 +73,7 @@ echo "  → $(wc -l < converted/train_dpo.jsonl) pairs"
 
 # ---- Step 2: Tokenize (skip ref log-probs for speed) ----
 echo ""
-echo "=== Step 2/4: Tokenize → parquet ==="
+echo "=== Step 2/5: Tokenize → parquet ==="
 $PYTHON -m ochat.data.generate_dpo_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -86,9 +86,18 @@ $PYTHON -m ochat.data.generate_dpo_dataset \
 echo "  → train: $(ls -lh pretokenized/dpo_data.train.parquet)"
 echo "  → eval:  $(ls -lh pretokenized/dpo_data.eval.parquet)"
 
-# ---- Step 3: Single-GPU LoRA (DPO is always LoRA) ----
+# ---- Step 3: Cache ref log-probs (standalone, enables full FT) ----
 echo ""
-echo "=== Step 3/4: Single-GPU DPO LoRA (${MAX_STEPS} steps) ==="
+echo "=== Step 3/5: Cache reference log-probs ==="
+$PYTHON -m ochat.data.cache_ref_logps \
+    --data-prefix pretokenized/dpo_data \
+    --model-path "$MODEL_PATH"
+echo "  → train cache: $(ls -lh pretokenized/dpo_data.train.ref_logps_cache.npz)"
+echo "  → eval cache:  $(ls -lh pretokenized/dpo_data.eval.ref_logps_cache.npz)"
+
+# ---- Step 4: Single-GPU LoRA (DPO is always LoRA) ----
+echo ""
+echo "=== Step 4/5: Single-GPU DPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_lora
 $PYTHON -m ochat.training_dpo.train_single \
     --local_rank 0 \
@@ -104,7 +113,7 @@ echo "  → output/dpo_lora/"
 
 # ---- Step 4: DeepSpeed LoRA (DPO is always LoRA) ----
 echo ""
-echo "=== Step 4/4: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
+echo "=== Step 5/5: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_deepspeed_lora
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
 (cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
