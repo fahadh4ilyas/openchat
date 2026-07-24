@@ -64,7 +64,7 @@ mkdir -p converted pretokenized output
 
 # ---- Step 1: Convert OpenAI JSONL → Conversation format ----
 echo "=== Step 1/5: Convert OpenAI JSONL → Conversation format ==="
-$PYTHON -m ochat.data.convert_dataset \
+$PYTHON -m ochat.data.convert_dataset_kto \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files data_kto.jsonl \
@@ -74,12 +74,11 @@ echo "  → $(wc -l < converted/train_kto.jsonl) examples ($(grep -c '"label":tr
 # ---- Step 2: Tokenize ----
 echo ""
 echo "=== Step 2/4: Tokenize → parquet (--kto) ==="
-$PYTHON -m ochat.data.generate_dataset \
+$PYTHON -m ochat.data.generate_kto_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files converted/train_kto.jsonl \
     --out-prefix pretokenized/kto_data \
-    --kto \
     --data-length-multiple-of 64 \
     --eval-ratio 0.2 \
     --num-splits 1 \
