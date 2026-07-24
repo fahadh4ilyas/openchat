@@ -73,7 +73,7 @@ echo "  → $(wc -l < converted/train_kto.jsonl) examples ($(grep -c '"label":tr
 
 # ---- Step 2: Tokenize ----
 echo ""
-echo "=== Step 2/7: Tokenize → parquet (--kto) ==="
+echo "=== Step 2/7: Tokenize → parquet ==="
 $PYTHON -m ochat.data.generate_kto_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
