@@ -128,6 +128,7 @@ class Tool(BaseModel):
 class ConversationOpenAI(BaseModel):
     messages: List[MessageOpenAI]
     tools: Optional[List[Tool]] = None
+    label: bool = True
 
 
 class Message(BaseModel):

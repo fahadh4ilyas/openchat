@@ -18,7 +18,7 @@ from typing import List, Optional, Dict
 from pydantic import ValidationError
 
 from ochat.config import MODEL_CONFIG_MAP, ConversationOpenAI, Conversation
-from ochat.config.conversation_template import MessageOpenAI, Tool, ImageContentPart, VideoContentPart, Message
+from ochat.config.conversation_template import Tool, ImageContentPart, VideoContentPart, Message
 
 
 def job_print(job_id: int, *args, **kwargs):
@@ -214,7 +214,8 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
                 items=out_items,
                 images=active_imgs if active_imgs else None,
                 videos=active_vids if active_vids else None,
-                system=system_prompt
+                system=system_prompt,
+                label=conv_openai.label,
             )
             
             results.append(final_conv.model_dump_json(exclude_none=True))

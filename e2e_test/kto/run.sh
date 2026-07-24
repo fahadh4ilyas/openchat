@@ -69,27 +69,11 @@ $PYTHON -m ochat.data.convert_dataset \
     --model-path "$MODEL_PATH" \
     --in-files data_kto.jsonl \
     --out-file converted/train_kto.jsonl
-echo "  → $(wc -l < converted/train_kto.jsonl) examples"
+echo "  → $(wc -l < converted/train_kto.jsonl) examples ($(grep -c '"label":true' converted/train_kto.jsonl) desirable, $(grep -c '"label":false' converted/train_kto.jsonl) undesirable)"
 
-# ---- Step 2: Label half as undesirable ----
+# ---- Step 2: Tokenize ----
 echo ""
-echo "=== Step 2/5: Label half of examples as undesirable ==="
-$PYTHON -c "
-import json
-lines = open('converted/train_kto.jsonl').readlines()
-out = []
-for i, line in enumerate(lines):
-    obj = json.loads(line)
-    if i % 2 == 1:
-        obj['label'] = False
-    out.append(json.dumps(obj))
-open('converted/train_kto.jsonl', 'w').write('\n'.join(out))
-print(f'  → {sum(1 for l in out if json.loads(l).get(\"label\", True))} desirable, {sum(1 for l in out if not json.loads(l).get(\"label\", True))} undesirable')
-"
-
-# ---- Step 3: Tokenize ----
-echo ""
-echo "=== Step 3/5: Tokenize → parquet (--kto) ==="
+echo "=== Step 2/4: Tokenize → parquet (--kto) ==="
 $PYTHON -m ochat.data.generate_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -105,7 +89,7 @@ echo "  → eval:  $(ls -lh pretokenized/kto_data.eval.parquet)"
 
 # ---- Step 4: Single-GPU ----
 echo ""
-echo "=== Step 4/5: Single-GPU KTO (${MAX_STEPS} steps) ==="
+echo "=== Step 3/4: Single-GPU KTO (${MAX_STEPS} steps) ==="
 rm -rf output/kto_single
 $PYTHON -m ochat.training_kto.train_single \
     --local_rank 0 \
@@ -121,7 +105,7 @@ echo "  → output/kto_single/"
 
 # ---- Step 5: DeepSpeed ----
 echo ""
-echo "=== Step 5/5: DeepSpeed KTO (${MAX_STEPS} steps) ==="
+echo "=== Step 4/4: DeepSpeed KTO (${MAX_STEPS} steps) ==="
 rm -rf output/kto_deepspeed
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
 (cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
