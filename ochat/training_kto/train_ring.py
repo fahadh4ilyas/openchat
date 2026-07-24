@@ -143,7 +143,7 @@ def train(args):
     if not ref_logps_precomputed and not is_lora:
         raise RuntimeError(
             "KTO requires reference log-probs. They were not precomputed during preprocessing "
-            "(use --ref-logps with --kto in generate_dataset.py). "
+            "(use --ref-logps with generate_kto_dataset.py). "
             "Without precomputed ref log-probs, training must compute them from the frozen base model, "
             "which requires LoRA/QLoRA (--use_lora or --use_qlora)."
         )
