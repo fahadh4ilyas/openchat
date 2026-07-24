@@ -399,3 +399,113 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
             rejected_ref = rejected_t.cpu().numpy()
 
     return chosen_ref, rejected_ref
+
+
+def ensure_kto_ref_logps_cached(model_engine, dataset, args, split_name: str):
+    """Precompute and cache KTO reference log-probs at training start.
+
+    Same pattern as ensure_dpo_ref_logps_cached but for unpaired KTO data.
+    Each example has a single ref_logp (no chosen/rejected prefix).
+
+    Args:
+        model_engine: DeepSpeed engine or plain PeftModel.
+        dataset: NumpyDataset for the split.
+        args: Training arguments.
+        split_name: "train" or "eval".
+
+    Returns:
+        ref_logp numpy array of shape (N,).
+    """
+    from ochat.training_utils._common import batch_to_tensor
+
+    is_distributed = dist.is_initialized()
+    rank = dist.get_rank() if is_distributed else 0
+
+    model = model_engine.module if hasattr(model_engine, "module") else model_engine
+    checksum = _dataset_checksum_kto(dataset)
+    cache_path = f"{args.data_prefix}.{split_name}.kto_ref_logps_cache.npz"
+
+    cache_hit = False
+    if rank == 0 and os.path.exists(cache_path):
+        cached = np.load(cache_path, allow_pickle=True)
+        if str(cached.get("checksum", "")) == checksum:
+            ref_logp = cached["ref_logp"]
+            cache_hit = True
+            print(f"Loaded cached KTO reference log-probs from {cache_path} "
+                  f"(checksum {checksum})")
+        else:
+            print(f"Cache {cache_path} is stale (checksum mismatch "
+                  f"{cached.get('checksum', 'none')} vs {checksum}), "
+                  f"recomputing...")
+
+    if is_distributed:
+        cache_hit_t = torch.tensor([cache_hit], device=args.device)
+        dist.broadcast(cache_hit_t, src=0)
+        cache_hit = bool(cache_hit_t.item())
+
+        if cache_hit:
+            if rank == 0:
+                size_t = torch.tensor([len(ref_logp)], device=args.device)
+            else:
+                size_t = torch.empty(1, dtype=torch.long, device=args.device)
+            dist.broadcast(size_t, src=0)
+            n = size_t.item()
+
+            if rank != 0:
+                ref_logp = np.empty(n, dtype=np.float32)
+            ref_t = torch.from_numpy(ref_logp).to(args.device)
+            dist.broadcast(ref_t, src=0)
+            if rank != 0:
+                ref_logp = ref_t.cpu().numpy()
+            return ref_logp
+
+    if rank == 0:
+        print(f"Precomputing KTO reference log-probs for {split_name} split "
+              f"(checksum {checksum}, caching to {cache_path})...")
+
+    num_examples = len(dataset)
+    ref_logp = np.empty(num_examples, dtype=np.float32)
+
+    model.disable_adapter_layers()
+
+    with torch.no_grad():
+        for i in range(num_examples):
+            example = dataset[[i]]
+            tensor, info = batch_to_tensor(example)
+            tensor = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v)
+                      for k, v in tensor.items()}
+
+            loss = model_engine(
+                **tensor, **info,
+                num_seq=0, return_per_seq_logps=True,
+                use_fast_norm=args.use_fast_norm,
+                use_fast_rope=args.use_fast_rope,
+            ).logits
+            ref_logp[i] = loss.sum().item()
+
+    model.enable_adapter_layers()
+
+    if rank == 0:
+        np.savez(cache_path, checksum=checksum, ref_logp=ref_logp)
+
+    if is_distributed:
+        ref_t = torch.from_numpy(ref_logp).to(args.device)
+        dist.broadcast(ref_t, src=0)
+        if rank != 0:
+            ref_logp = ref_t.cpu().numpy()
+
+    return ref_logp
+
+
+def _dataset_checksum_kto(dataset) -> str:
+    """Compact fingerprint of KTO dataset contents for cache validation."""
+    import hashlib
+    h = hashlib.sha256()
+    h.update(str(len(dataset)).encode())
+
+    for idx in (0, len(dataset) - 1):
+        arr = dataset["nz_input_ids"][idx]
+        h.update(arr[:_CACHE_SAMPLE_TOKENS].tobytes())
+
+    h.update(str(int(dataset["total_length"].sum())).encode())
+    return h.hexdigest()[:16]

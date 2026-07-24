@@ -151,6 +151,7 @@ class Conversation(BaseModel):
 
     condition: str = ""
     system: str = ""
+    label: bool = True
 
 
 class PretokenizedConversation(BaseModel):
