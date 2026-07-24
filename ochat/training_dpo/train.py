@@ -25,6 +25,7 @@ from ochat.training_utils._training_args import (
 )
 from ochat.training_utils._common import (
     combine_chosen_rejected_batch,
+    per_seq_response_tokens,
     mlflow_stopper_wrapper,
     get_latest_checkpoint,
     create_dataset,
@@ -41,7 +42,7 @@ from ochat.training_utils.base_train import (
 )
 from ochat.training_dpo.utils import (
     dpo_batch_collate,
-    dpo_loss,
+    dpo_loss_router,
     check_ref_logps_precomputed,
 )
 from ochat.training_utils.multipack_dataloader import MultipackDistributedDataloader
@@ -59,6 +60,10 @@ class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
     """DPO training arguments (LoRA only, base_lr=1e-2)."""
     base_lr: float = 1e-2
     dpo_beta: float = 0.1
+    loss_type: str = "sigmoid"
+    label_smoothing: float = 0.0
+    discopop_tau: float = 0.05
+    cpo_alpha: float = 0.0
     use_ring: bool = False
 
 
@@ -68,6 +73,16 @@ def parse_args():
     add_base_args(parser, base_lr=1e-2)
     add_lora_args(parser)
     parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO temperature parameter")
+    parser.add_argument("--loss_type", type=str, default="sigmoid",
+                        help="DPO loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, "
+                             "bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, "
+                             "sft, sigmoid_norm")
+    parser.add_argument("--label_smoothing", type=float, default=0.0,
+                        help="Label smoothing ε (for exo_pair, robust, aot, aot_unpaired)")
+    parser.add_argument("--discopop_tau", type=float, default=0.05,
+                        help="DiscoPOP temperature τ")
+    parser.add_argument("--cpo_alpha", type=float, default=0.0,
+                        help="CPO SFT weight (0 = pure DPO, >0 = CPO. Default: 0)")
     parser = deepspeed.add_config_arguments(parser)
     return parser.parse_args()
 
@@ -92,6 +107,9 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
     eval_total_loss = torch.zeros((), dtype=torch.float32, device=args.device)
     eval_total_steps = 0
 
+    need_tokens = args.loss_type in ("ipo", "sigmoid_norm")
+    use_cpo = getattr(args, "cpo_alpha", 0.0) > 0
+
     eval_loader.set_epoch(eval_epoch)
     with torch.inference_mode():
         for (chosen_t, rejected_t, chosen_ref, rejected_ref, batch_info), all_numseq, cur_numseq in eval_loader:
@@ -109,7 +127,28 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
             ).logits
             chosen_logp = per_seq_logps[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:]
-            eval_loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
+
+            kwargs = {}
+            if need_tokens:
+                resp_tokens = per_seq_response_tokens(combined_t)
+                kwargs["chosen_tokens"] = resp_tokens[:num_chosen]
+                kwargs["rejected_tokens"] = resp_tokens[num_chosen:]
+
+            if use_cpo:
+                loss_type = "sigmoid"
+                dpo_term = dpo_loss_router(
+                    chosen_logp, rejected_logp, chosen_ref, rejected_ref,
+                    args.dpo_beta, loss_type=loss_type, **kwargs,
+                )
+                eval_loss = dpo_term + args.cpo_alpha * (-chosen_logp.mean())
+            else:
+                eval_loss = dpo_loss_router(
+                    chosen_logp, rejected_logp, chosen_ref, rejected_ref,
+                    args.dpo_beta, loss_type=args.loss_type,
+                    label_smoothing=args.label_smoothing,
+                    discopop_tau=args.discopop_tau,
+                    **kwargs,
+                )
             eval_total_loss.add_(eval_loss)
             eval_total_steps += 1
 
@@ -120,6 +159,9 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
 
 @mlflow_stopper_wrapper()
 def train(args):
+    use_cpo = getattr(args, "cpo_alpha", 0.0) > 0
+    need_tokens = args.loss_type in ("ipo", "sigmoid_norm")
+
     from ochat.training_dpo.train_ring import train as train_ring
 
     if getattr(args, "use_ring", False):
@@ -216,7 +258,28 @@ def train(args):
 
             chosen_logp = per_seq_logps[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:]
-            loss = dpo_loss(chosen_logp, rejected_logp, chosen_ref, rejected_ref, args.dpo_beta)
+
+            kwargs = {}
+            if need_tokens:
+                resp_tokens = per_seq_response_tokens(combined_t)
+                kwargs["chosen_tokens"] = resp_tokens[:num_chosen]
+                kwargs["rejected_tokens"] = resp_tokens[num_chosen:]
+
+            if use_cpo:
+                dpo_component = dpo_loss_router(
+                    chosen_logp, rejected_logp, chosen_ref, rejected_ref,
+                    args.dpo_beta, loss_type="sigmoid", **kwargs,
+                )
+                sft_component = -chosen_logp.mean()
+                loss = dpo_component + args.cpo_alpha * sft_component
+            else:
+                loss = dpo_loss_router(
+                    chosen_logp, rejected_logp, chosen_ref, rejected_ref,
+                    args.dpo_beta, loss_type=args.loss_type,
+                    label_smoothing=args.label_smoothing,
+                    discopop_tau=args.discopop_tau,
+                    **kwargs,
+                )
 
             model_engine.backward(loss)
 
@@ -232,14 +295,15 @@ def train(args):
                 torch.cuda.empty_cache()
 
             if RANK == 0:
-                mlflow.log_metrics(
-                    metrics={
-                        "train/loss": loss.item(),
-                        "train/lr": lr_this_step,
-                        "train/epoch": args.epochs * step / train_total_steps,
-                    },
-                    step=step,
-                )
+                metrics = {
+                    "train/loss": loss.item(),
+                    "train/lr": lr_this_step,
+                    "train/epoch": args.epochs * step / train_total_steps,
+                }
+                if use_cpo:
+                    metrics["train/dpo_loss"] = dpo_component.item()
+                    metrics["train/sft_loss"] = sft_component.item()
+                mlflow.log_metrics(metrics=metrics, step=step)
                 progress_bar.update()
 
             if args.checkpoint_every > 0 and (step % args.checkpoint_every == 0):

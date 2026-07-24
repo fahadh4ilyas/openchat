@@ -33,6 +33,7 @@ from ochat.training_utils._training_args import (
 )
 from ochat.training_utils._common import (
     combine_chosen_rejected_batch,
+    per_seq_response_tokens,
     mlflow_stopper_wrapper,
     get_latest_checkpoint,
     create_dataset,
@@ -49,7 +50,6 @@ from ochat.training_utils.base_train import (
 )
 from ochat.training_orpo.utils import (
     orpo_batch_collate,
-    _per_seq_response_tokens,
     orpo_loss,
 )
 from ochat.training_utils.multipack_dataloader import MultipackDistributedDataloader
@@ -109,7 +109,7 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
                 use_fast_rope=args.use_fast_rope,
             ).logits
 
-            resp_tokens = _per_seq_response_tokens(combined_t)
+            resp_tokens = per_seq_response_tokens(combined_t)
             chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
             sft_loss = -chosen_logp.mean()
@@ -206,7 +206,7 @@ def train(args):
                 use_fast_rope=args.use_fast_rope,
             ).logits
 
-            resp_tokens = _per_seq_response_tokens(combined_t)
+            resp_tokens = per_seq_response_tokens(combined_t)
             chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
             loss = -chosen_logp.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)

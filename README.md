@@ -400,6 +400,15 @@ python -m ochat.training_dpo.train_single \
     --epochs 5 --save_every 1 \
     --use_lora --dpo_beta 0.1
 
+# CPO single-GPU (DPO + SFT term)
+python -m ochat.training_dpo.train_single \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 --save_every 1 \
+    --use_lora --dpo_beta 0.1 --cpo_alpha 1.0
+
 # ORPO single-GPU (full FT or LoRA)
 python -m ochat.training_orpo.train_single \
     --model_path BASE_REPO \
@@ -436,6 +445,77 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
 ```
 
 > DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT. `base_lr` defaults to `1e-2`.
+
+##### CPO (Contrastive Preference Optimization)
+
+CPO adds an SFT term to the DPO loss: `L_CPO = L_DPO + α · L_SFT`. This encourages the policy to directly maximize the likelihood of chosen responses while still learning from preference pairs. Reuses the same paired DPO data format unchanged — just add `--cpo_alpha`:
+
+```bash
+NUM_GPUS=8
+
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
+    --model_path BASE_REPO \
+    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save_path PATH_TO_SAVE_MODEL \
+    --batch_max_len BATCH_SIZE \
+    --epochs 5 \
+    --save_every 1 \
+    --dpo_beta 0.1 \
+    --cpo_alpha 1.0 \
+    --use_lora \
+    --lora_r 32 \
+    --lora_alpha 32 \
+    --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+    --deepspeed \
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+```
+
+> `--cpo_alpha` controls the SFT weight (default `0.0` = pure DPO). When `> 0`, MLflow also logs `train/dpo_loss` and `train/sft_loss` component breakdowns. Reference: Xu et al., "Contrastive Preference Optimization" (arXiv:2401.08417).
+
+#### DPO Loss Variants
+
+DPO supports 15 loss variants via the `--loss_type` flag. All share the same paired
+chosen/rejected data format and reference model — they differ only in how the loss is
+computed from the policy/reference log-ratio.
+
+**Simple variants** (no extra flags):
+
+| `--loss_type` | Formula | Description |
+|---------------|---------|-------------|
+| `sigmoid` | `−log σ(β·Δ)` | Standard DPO. **Default.** |
+| `hinge` | `max(0, 1 − β·Δ)` | Hard margin, no softening for near-boundary pairs |
+| `nca_pair` | `−log σ(r₁) − ½log σ(−r₁) − ½log σ(−r₂)` | Noise Contrastive Alignment |
+| `bco_pair` | `−log σ(r₁) − log σ(−r₂)` | Binary Classifier Optimization |
+| `sppo_hard` | `−βΔ` (clipped) | Self-Play Preference Opt, hard variant |
+| `apo_zero` | `(1−σ(β·lr₁)) + σ(β·lr₂)` | Aligned Policy Opt, zero variant |
+| `apo_down` | `σ(β·lr₁) + (1−σ(β·Δ))` | APO, down-weight variant |
+
+**Token-aware variants** (use per-token average log-probs, not sums):
+
+| `--loss_type` | Formula | Description |
+|---------------|---------|-------------|
+| `ipo` | `(Δ_avg − 1/(2β))²` | Identity Preference Opt, β=τ |
+| `sigmoid_norm` | `−log σ(β·Δ/len)` | Sigmoid with length-normalized delta |
+
+**Smoothing variants** (use `--label_smoothing ε`):
+
+| `--loss_type` | Formula | Description |
+|---------------|---------|-------------|
+| `exo_pair` | `KL(p_θ ‖ p_rh)` | EXO: minimizes KL to ε-smoothed human preference |
+| `robust` | `−(1−ε)log σ(βΔ) − ε·log σ(−βΔ)` | Models ε probability of label flip (recommended ε=0.1) |
+| `aot` | Sorted-pair robust loss | Alignment Over Trajectories: sorts by score |
+| `aot_unpaired` | All-pair robust loss | Unpaired variant of AOT |
+
+**Special variants:**
+
+| `--loss_type` | Flags | Description |
+|---------------|-------|-------------|
+| `discopop` | `--discopop_tau 0.05` | DiscoPOP: sigmoid-gated modulation at temperature τ |
+| `sft` | — | Pure SFT on chosen (ignores rejected); prefer `--cpo_alpha` |
+
+> Δ = `chosen_score − rejected_score` (policy log-ratio minus reference log-ratio).
+> All variants work with CPO: `--cpo_alpha > 0` adds `α · (−log p_θ(chosen))` using the sigmoid loss as the DPO term.
+
 >
 > **`batch_max_len` in DPO/ORPO**: The combined forward concatenates chosen and rejected into a single batch. The dataset `total_length` is `chosen_len + rejected_len`, so `batch_max_len` directly controls the combined token count. For example, `batch_max_len=4096` means up to ~2048 chosen + ~2048 rejected tokens per GPU.
 
@@ -534,6 +614,10 @@ DPO-specific:
 | Flag | Default | Description |
 |---|---|---|
 | `--dpo_beta` | 0.1 | DPO temperature; higher = closer to reference |
+| `--loss_type` | sigmoid | Loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, sft, sigmoid_norm |
+| `--label_smoothing` | 0.0 | Label smoothing ε for exo_pair, robust, aot, aot_unpaired |
+| `--discopop_tau` | 0.05 | Temperature τ for discopop loss |
+| `--cpo_alpha` | 0.0 | CPO SFT weight (0 = pure DPO, >0 enables CPO) |
 
 ORPO-specific:
 
@@ -545,9 +629,9 @@ ORPO-specific:
 
 ## Architecture Notes
 
-### DPO/ORPO Combined Forward
+### DPO/ORPO/CPO Combined Forward
 
-DPO and ORPO training use a single forward pass for both chosen and rejected responses. The model's `return_per_seq_logps=True` flag returns per-sequence log-prob sums (split by `cu_seqlens`), which are then divided into chosen/rejected halves. This avoids the "two-forward-one-backward" incompatibility with DeepSpeed's forward/backward pairing.
+DPO, CPO, and ORPO training use a single forward pass for both chosen and rejected responses. The model's `return_per_seq_logps=True` flag returns per-sequence log-prob sums (split by `cu_seqlens`), which are then divided into chosen/rejected halves. This avoids the "two-forward-one-backward" incompatibility with DeepSpeed's forward/backward pairing.
 
 The combined forward is implemented across all 25 model files in `ochat/models/`. For details, see `MODEL_FORWARD_AUDIT.md` and `DPO_ORPO_TRL_AUDIT.md`.
 
