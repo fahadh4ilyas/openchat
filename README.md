@@ -432,7 +432,7 @@ python -m ochat.training_dpo.train_single \
     --save_path PATH_TO_SAVE_MODEL \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
-    --use_lora --dpo_beta 0.1
+    --dpo_beta 0.1
 
 # CPO single-GPU (DPO + SFT term)
 python -m ochat.training_dpo.train_single \
@@ -441,7 +441,7 @@ python -m ochat.training_dpo.train_single \
     --save_path PATH_TO_SAVE_MODEL \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
-    --use_lora --dpo_beta 0.1 --cpo_alpha 1.0
+    --dpo_beta 0.1 --cpo_alpha 1.0
 
 # ORPO single-GPU (full FT or LoRA)
 python -m ochat.training_orpo.train_single \
@@ -459,7 +459,7 @@ python -m ochat.training_kto.train_single \
     --save_path PATH_TO_SAVE_MODEL \
     --batch_max_len BATCH_SIZE \
     --epochs 5 --save_every 1 \
-    --use_lora --kto_beta 0.1
+    --kto_beta 0.1
 ```
 
 > Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
@@ -479,7 +479,6 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --epochs 5 \
     --save_every 1 \
     --dpo_beta 0.1 \
-    --use_lora \
     --lora_r 32 \
     --lora_alpha 32 \
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
@@ -505,7 +504,6 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --save_every 1 \
     --dpo_beta 0.1 \
     --cpo_alpha 1.0 \
-    --use_lora \
     --lora_r 32 \
     --lora_alpha 32 \
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
@@ -609,7 +607,6 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --batch_max_len BATCH_SIZE \
     --epochs 5 \
     --save_every 1 \
-    --use_lora \
     --lora_r 32 \
     --lora_alpha 32 \
     --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
@@ -668,7 +665,7 @@ Common flags across all training modes:
 | `--eval_strategy` | epoch | `epoch` or `step` |
 | `--eval_every` | *required* | Eval interval in epochs or steps |
 | **LoRA / QLoRA** |||
-| `--use_lora` | false | Enable LoRA fine-tuning |
+| `--use_lora` | false | Enable LoRA fine-tuning (force to true for DPO and KTO) |
 | `--use_qlora` | false | Enable QLoRA (4-bit or 8-bit quantization) |
 | `--lora_r` | 32 | LoRA rank |
 | `--lora_alpha` | 32 | LoRA scaling factor |
