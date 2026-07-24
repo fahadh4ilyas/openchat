@@ -20,7 +20,7 @@
   <img src="assets/openchat_grok.png" style="width: 45%;">
 </div>
 
-OpenChat is an innovative library of open-source language models, originally fine-tuned with [C-RLFT](https://arxiv.org/pdf/2309.11235.pdf) - a strategy inspired by offline reinforcement learning. The current codebase supports SFT, DPO, and ORPO training with padding-free training and the Multipack Sampler, achieving 3–10× speedup over conventional padded training. DPO and ORPO use a combined forward approach (single forward for both chosen and rejected) compatible with DeepSpeed's forward/backward pairing.
+OpenChat is an innovative library of open-source language models, originally fine-tuned with [C-RLFT](https://arxiv.org/pdf/2309.11235.pdf) - a strategy inspired by offline reinforcement learning. The current codebase supports SFT, DPO, ORPO, and KTO training with padding-free training and the Multipack Sampler, achieving 3–10× speedup over conventional padded training. DPO and ORPO use a combined forward approach (single forward for both chosen and rejected) compatible with DeepSpeed's forward/backward pairing; KTO uses unpaired data with a single forward pass.
 
 [![DOI](https://zenodo.org/badge/645397533.svg)](https://zenodo.org/badge/latestdoi/645397533)
 
@@ -134,14 +134,18 @@ ochat/
 ├── models/              # Unpadded model implementations
 ├── training_utils/      # Shared training infrastructure
 │   ├── _training_args.py       # BaseTrainingArguments, LoraTrainingArgsMixin
-│   ├── numpy_dataset.py        # NumpyDataset (shared by SFT/DPO/ORPO)
+│   ├── _common.py              # Shared: batch collation, LR, checkpointing, MLflow
+│   ├── _ce_utils.py            # Shared: weighted CE, token accuracy, LM loss
+│   ├── base_train.py           # Shared: model creation, eval loop, ref log-prob caching
+│   ├── numpy_dataset.py        # NumpyDataset (shared by SFT/DPO/ORPO/KTO)
 │   ├── multipack_dataloader.py # Base distributed dataloader
 │   ├── multipack_dataloader_ring.py  # Base ring-attention dataloader
 │   ├── multipack_dataloader_ring_dpo.py  # DPO/ORPO ring dataloader (chosen_/rejected_ keys)
 │   └── multipack_dataloader_single.py   # Single-GPU dataloader
-├── training_sft/        # SFT/C-RLFT training (train, train_ring, train_single, utils)
+├── training_sft/        # SFT training (train, train_ring, train_single)
 ├── training_dpo/        # DPO training (train, train_ring, train_single, utils)
 ├── training_orpo/       # ORPO training (train, train_ring, train_single, utils)
+├── training_kto/        # KTO training (train, train_ring, train_single, utils)
 ├── data/                # Dataset preprocessing (tokenize → Arrow/Parquet)
 ├── kernel/              # Custom CUDA kernels
 ├── deepspeed_config/    # DeepSpeed ZERO stage JSON configs
@@ -214,6 +218,7 @@ class Conversation(BaseModel):
     items: List[Message]  # All messages within the conversation
     condition: str = ""  # C-RLFT condition, can be any string or empty.
     system: str = ""  # System message for this conversation
+    label: bool = True  # KTO label: True = desirable, False = undesirable
 
     images: Optional[List[str]] = None # Path to images relative to dataset directory
     videos: Optional[List[str]] = None # Path to videos relative to dataset directory
@@ -255,7 +260,7 @@ KTO example (unpaired, each line is independently desirable or undesirable):
 {"items":[{"role":"user","content":"What is the capital of France?","weight":0.0},{"role":"assistant","content":"France is in Europe.","weight":1.0}],"label":false,"system":"You are a helpful AI assistant."}
 ```
 
-> KTO examples follow the same Conversation format as SFT with one extra field: `label` (boolean, defaults to `true`). `true` = desirable response, `false` = undesirable. No pairing — each line is independent. The `convert_dataset.py` tool automatically sets `label: true`; manually flip undesirables to `false`. For more examples, see `e2e_test/kto/data_kto.jsonl`.
+> KTO examples follow the same Conversation format as SFT with one extra field: `label` (boolean, defaults to `true`). `true` = desirable response, `false` = undesirable. No pairing — each line is independent. When converting from OpenAI format, set `"label"` directly in the input JSONL (defaults to `true` if omitted). For more examples, see `e2e_test/kto/data_kto.jsonl`.
 
 #### Converting from OpenAI Format
 
@@ -631,7 +636,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
     ... other flags ...
 ```
 
-Ring-attention model types (e.g. `llamaRing`, `qwen3_5_chatml` + `--use_ring`) automatically use the ring-attention dataloader and forward pass. This works with both SFT and DPO training.
+Ring-attention model types (e.g. `llamaRing`, `qwen3_5_chatml` + `--use_ring`) automatically use the ring-attention dataloader and forward pass. This works with SFT, DPO, ORPO, and KTO training.
 
 #### Training Flags Reference
 
@@ -709,6 +714,10 @@ KTO-specific:
 DPO, CPO, and ORPO training use a single forward pass for both chosen and rejected responses. The model's `return_per_seq_logps=True` flag returns per-sequence log-prob sums (split by `cu_seqlens`), which are then divided into chosen/rejected halves. This avoids the "two-forward-one-backward" incompatibility with DeepSpeed's forward/backward pairing.
 
 The combined forward is implemented across all 25 model files in `ochat/models/`. For details, see `MODEL_FORWARD_AUDIT.md` and `DPO_ORPO_TRL_AUDIT.md`.
+
+### KTO Single Forward
+
+KTO training uses a single forward pass identical to SFT — no chosen/rejected pairing, no `combine_chosen_rejected_batch`. The model's `return_per_seq_logps=True` returns per-sequence log-prob sums, and the KTO loss is computed per example using batch-level KL estimation. The frozen base model serves as reference (same LoRA adapter pattern as DPO).
 
 ### ORPO Log-Prob Normalization
 
