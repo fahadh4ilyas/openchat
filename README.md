@@ -327,7 +327,7 @@ DPO-specific:
 
 | Flag | Description |
 |---|---|
-| `--no-ref-logps` | Skip reference log-prob computation (training computes online) |
+| `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
 
 Output files are written as `.parquet` (or `.pickle`) to `PRETOKENIZED_DATA_OUTPUT_PATH.train.parquet` and optionally `.eval.parquet`.
 

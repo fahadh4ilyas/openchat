@@ -71,10 +71,10 @@ class TestGenerateDPODatasetArgs:
             out_prefix="/tmp/dpo_data",
         )
 
-    def test_no_ref_logps_flag(self, base_kwargs):
+    def test_ref_logps_flag(self, base_kwargs):
         from ochat.data.generate_dpo_dataset import DataArguments
-        args = DataArguments(**{**base_kwargs, "no_ref_logps": True})
-        assert args.no_ref_logps is True
+        args = DataArguments(**{**base_kwargs, "ref_logps": True})
+        assert args.ref_logps is True
 
     def test_valid_defaults(self, base_kwargs):
         from ochat.data.generate_dpo_dataset import DataArguments

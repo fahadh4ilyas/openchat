@@ -51,7 +51,7 @@ class DataArguments(BaseModel):
     max_jobs: int = Field(10)
     split_files: bool = Field(False)
     num_splits: int = Field(10)
-    no_ref_logps: bool = Field(False)
+    ref_logps: bool = Field(False)
 
     @validator("max_jobs")
     def check_max_jobs(cls, v, info: ValidationInfo):
@@ -208,7 +208,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         row["num_seqs"] = float(sum(chosen_data.get("nz_shifted_loss_weights", [0])) +
                                 sum(rejected_data.get("nz_shifted_loss_weights", [0])))
 
-        # Sentinel NaN: filled in phase 2 (compute_ref_logprobs) unless --no-ref-logps.
+        # Sentinel NaN: filled in phase 2 (compute_ref_logprobs) when --ref-logps is set.
         # Training scripts auto-detect NaN and switch to online reference computation.
         row["chosen_ref_logp"] = [float("nan")]
         row["rejected_ref_logp"] = [float("nan")]
@@ -243,7 +243,7 @@ def _batch_to_tensor(row: dict) -> dict:
 
 def compute_ref_logprobs(rows: list, args: DataArguments):
     """Phase 2: load the base model and compute reference log-probs for all pairs."""
-    if args.no_ref_logps:
+    if not args.ref_logps:
         return rows
 
     from ochat.config import MODEL_CONFIG_MAP
@@ -288,7 +288,7 @@ def generate_split(rows: list, split_name: str, args: DataArguments):
     """Tokenize + compute ref log-probs + write parquet for one data split."""
     from ochat.config import MODEL_CONFIG_MAP
 
-    metadata = {"model_type": args.model_type, "ref_logps_computed": not args.no_ref_logps}
+    metadata = {"model_type": args.model_type, "ref_logps_computed": args.ref_logps}
 
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
@@ -386,7 +386,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-jobs", type=int, default=10)
     parser.add_argument("--num-splits", type=int, default=10)
     parser.add_argument("--split-files", action="store_true")
-    parser.add_argument("--no-ref-logps", action="store_true", help="Skip reference log-prob computation (for debugging or if pre-computed elsewhere)")
+    parser.add_argument("--ref-logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU)")
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))

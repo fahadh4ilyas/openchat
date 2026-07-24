@@ -25,8 +25,8 @@ from ochat.data.generate_dpo_dataset import DataArguments, generate_dataset
 
 
 if __name__ == "__main__":
-    # Remove --no-ref-logps if present (ORPO always skips ref log-probs)
-    args_list = [a for a in sys.argv[1:] if a != "--no-ref-logps"]
+    # ORPO always skips ref log-probs — remove --ref-logps if present
+    args_list = [a for a in sys.argv[1:] if a != "--ref-logps"]
 
     # Reuse DPO data generation pipeline (same JSONL format, same tokenization)
     import argparse
@@ -51,6 +51,6 @@ if __name__ == "__main__":
     parser.add_argument("--split-files", action="store_true")
 
     args = parser.parse_args(args_list)
-    args = DataArguments(**vars(args), no_ref_logps=True)
+    args = DataArguments(**vars(args), ref_logps=False)
 
     generate_dataset(args)

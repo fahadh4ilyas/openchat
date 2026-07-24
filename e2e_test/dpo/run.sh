@@ -73,7 +73,7 @@ echo "  → $(wc -l < converted/train_dpo.jsonl) pairs"
 
 # ---- Step 2: Tokenize (skip ref log-probs for speed) ----
 echo ""
-echo "=== Step 2/4: Tokenize → parquet (--no-ref-logps) ==="
+echo "=== Step 2/4: Tokenize → parquet ==="
 $PYTHON -m ochat.data.generate_dpo_dataset \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
@@ -82,8 +82,7 @@ $PYTHON -m ochat.data.generate_dpo_dataset \
     --data-length-multiple-of 64 \
     --eval-ratio 0.2 \
     --num-splits 1 \
-    --max-jobs 1 \
-    --no-ref-logps
+    --max-jobs 1
 echo "  → train: $(ls -lh pretokenized/dpo_data.train.parquet)"
 echo "  → eval:  $(ls -lh pretokenized/dpo_data.eval.parquet)"
 
