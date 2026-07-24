@@ -35,6 +35,95 @@ BATCH_KEYS = {
 MODEL_LR = ["mistral", "mixtral", "qwen2", "qwen3", "qwen3_5", "gemma", "gemma2", "phi", "deepseekv2"]
 
 
+# -- Reference log-prob checking ---------------------------------------------
+
+
+def check_ref_logps_precomputed(
+    dataset: NumpyDataset,
+    key: str = "chosen_ref_logp",
+    cache_paths: Optional[list[str]] = None,
+    checksum_keys: Optional[list[str]] = None,
+) -> bool:
+    """Check whether reference log-probs are available.
+
+    Checks in order:
+    1. Metadata key 'ref_logps_computed' (set during preprocessing).
+    2. Disk cache files with valid checksums from prior training runs.
+    3. NaN sentinel on the data column (legacy datasets).
+
+    Args:
+        train_dataset: The NumpyDataset to check.
+        key: Column name to check for NaN sentinel (DPO uses 'chosen_ref_logp',
+             KTO uses 'ref_logp').
+        cache_paths: If given, list of .npz cache file paths to check with
+            checksum validation. All must exist and have matching checksums.
+        checksum_keys: Dataset column keys to hash for checksum comparison
+            (DPO: ['chosen_nz_input_ids', 'rejected_nz_input_ids'],
+             KTO: ['nz_input_ids']). Required if cache_paths is given.
+    """
+    precomputed = dataset.metadata.get("ref_logps_computed", None)
+    if precomputed is not None:
+        return precomputed
+
+    if cache_paths and checksum_keys:
+        expected = _compute_dataset_checksum(dataset, checksum_keys)
+        for path in cache_paths:
+            if not os.path.isfile(path):
+                return False
+            cached = np.load(path, allow_pickle=True)
+            if str(cached.get("checksum", "")) != expected:
+                return False
+        return True
+
+    sample = np.asarray(dataset[key][0], dtype=np.float32)
+    return not np.isnan(sample).any()
+
+
+def _compute_dataset_checksum(dataset: NumpyDataset, keys: list[str]) -> str:
+    """Compute a compact dataset fingerprint for cache validation.
+
+    Hashes: dataset length + first/last example (first 256 tokens of each key)
+    + total token count. Fast even on large datasets.
+    """
+    import hashlib
+    h = hashlib.sha256()
+    h.update(str(len(dataset)).encode())
+    for idx in (0, len(dataset) - 1):
+        for k in keys:
+            arr = dataset[k][idx]
+            h.update(arr[:256].tobytes())
+    h.update(str(int(dataset["total_length"].sum())).encode())
+    return h.hexdigest()[:16]
+
+
+def _check_ref_logps_ready(
+    train_dataset: NumpyDataset,
+    eval_dataset: NumpyDataset | None,
+    args,
+    key: str,
+    cache_suffix: str,
+    checksum_keys: list[str],
+) -> bool:
+    """Check ref log-probs across both train and eval datasets.
+
+    Validates the metadata key, disk caches (with checksum), and NaN
+    sentinel. Returns True if ref log-probs are available for all
+    splits, False otherwise.
+    """
+    splits = [("train", train_dataset)]
+    if eval_dataset is not None:
+        splits.append(("eval", eval_dataset))
+
+    for split_name, dataset in splits:
+        if not check_ref_logps_precomputed(
+            dataset, key=key,
+            cache_paths=[f"{args.data_prefix}.{split_name}.{cache_suffix}"],
+            checksum_keys=checksum_keys,
+        ):
+            return False
+    return True
+
+
 # -- Dataset loading ----------------------------------------------------------
 
 def create_dataset(args, split_name: str) -> Optional[NumpyDataset]:

@@ -14,22 +14,7 @@ from typing import Dict, Optional, Tuple
 
 from transformers import ProcessorMixin
 
-from ochat.training_utils.numpy_dataset import NumpyDataset
 from ochat.training_utils._common import batch_to_tensor
-
-
-def check_ref_logps_precomputed(train_dataset: NumpyDataset) -> bool:
-    """Check whether reference log-probs were precomputed during preprocessing.
-
-    Reads the 'ref_logps_computed' metadata key set by generate_dpo_dataset.
-    Falls back to NaN detection for legacy datasets without the metadata key.
-    """
-    precomputed = train_dataset.metadata.get("ref_logps_computed", None)
-    if precomputed is not None:
-        return precomputed
-    # Legacy dataset: detect via NaN sentinel
-    sample = np.asarray(train_dataset["chosen_ref_logp"][0], dtype=np.float32)
-    return not np.isnan(sample).any()
 
 
 def dpo_batch_collate(batch: Dict[str, np.ndarray], dataset_path: Optional[str] = None,

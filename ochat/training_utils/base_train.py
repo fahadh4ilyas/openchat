@@ -6,7 +6,6 @@ Each mode's train.py imports these and provides its mode-specific forward/loss.
 
 import os
 import json
-import hashlib
 
 import torch
 import torch.distributed as dist
@@ -249,28 +248,6 @@ def _parse_ds_config(args_dict: dict) -> dict:
 
 # -- DPO reference log-prob cache --------------------------------------------
 
-_CACHE_SAMPLE_TOKENS = 256  # first N tokens hashed per head/tail example
-
-
-def _dataset_checksum(dataset) -> str:
-    """Compact fingerprint of dataset contents for cache validation.
-
-    Hashes:  dataset length + first/last example's input IDs + total token count.
-    Only ranks first/last samples and a few hundred tokens, so is fast even
-    on large datasets.
-    """
-    h = hashlib.sha256()
-    h.update(str(len(dataset)).encode())
-
-    for idx in (0, len(dataset) - 1):
-        for prefix in ("chosen_", "rejected_"):
-            arr = dataset[f"{prefix}nz_input_ids"][idx]
-            h.update(arr[: _CACHE_SAMPLE_TOKENS].tobytes())
-
-    h.update(str(int(dataset["total_length"].sum())).encode())
-    return h.hexdigest()[:16]
-
-
 def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
     """Precompute and cache DPO reference log-probs at training start.
 
@@ -293,13 +270,13 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
     Returns:
         (chosen_ref_logp, rejected_ref_logp) numpy arrays of shape (N,).
     """
-    from ochat.training_utils._common import batch_to_tensor
+    from ochat.training_utils._common import batch_to_tensor, _compute_dataset_checksum
 
     is_distributed = dist.is_initialized()
     rank = dist.get_rank() if is_distributed else 0
 
     model = model_engine.module if hasattr(model_engine, "module") else model_engine
-    checksum = _dataset_checksum(dataset)
+    checksum = _compute_dataset_checksum(dataset, ["chosen_nz_input_ids", "rejected_nz_input_ids"])
     cache_path = f"{args.data_prefix}.{split_name}.ref_logps_cache.npz"
 
     # Try loading cached result (rank 0 loads from disk, broadcasts to all)
@@ -416,13 +393,13 @@ def ensure_kto_ref_logps_cached(model_engine, dataset, args, split_name: str):
     Returns:
         ref_logp numpy array of shape (N,).
     """
-    from ochat.training_utils._common import batch_to_tensor
+    from ochat.training_utils._common import batch_to_tensor, _compute_dataset_checksum
 
     is_distributed = dist.is_initialized()
     rank = dist.get_rank() if is_distributed else 0
 
     model = model_engine.module if hasattr(model_engine, "module") else model_engine
-    checksum = _dataset_checksum_kto(dataset)
+    checksum = _compute_dataset_checksum(dataset, ["nz_input_ids"])
     cache_path = f"{args.data_prefix}.{split_name}.kto_ref_logps_cache.npz"
 
     cache_hit = False
@@ -495,17 +472,3 @@ def ensure_kto_ref_logps_cached(model_engine, dataset, args, split_name: str):
             ref_logp = ref_t.cpu().numpy()
 
     return ref_logp
-
-
-def _dataset_checksum_kto(dataset) -> str:
-    """Compact fingerprint of KTO dataset contents for cache validation."""
-    import hashlib
-    h = hashlib.sha256()
-    h.update(str(len(dataset)).encode())
-
-    for idx in (0, len(dataset) - 1):
-        arr = dataset["nz_input_ids"][idx]
-        h.update(arr[:_CACHE_SAMPLE_TOKENS].tobytes())
-
-    h.update(str(int(dataset["total_length"].sum())).encode())
-    return h.hexdigest()[:16]
