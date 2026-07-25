@@ -11,11 +11,6 @@ import argparse
 from ochat.config._model_config_data import MODEL_CONFIG_DATA
 
 
-def _conv_type(conv_type: str) -> str:
-    """Already stored as string in data."""
-    return conv_type
-
-
 def _tokenizer_type(has_processor: bool) -> str:
     return "processor" if has_processor else "tokenizer"
 
