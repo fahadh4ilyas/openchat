@@ -88,7 +88,8 @@ $PYTHON -m ochat.training_sft.train_single \
     --batch-max-len "$BATCH_MAX_LEN" \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --experiment-name e2e_sft --run-name single_full_ft \
-    --tracking-uri "$MLFLOW_URI"
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope
 echo "  → output/single_full_ft/"
 
 # ---- Step 4: Single-GPU LoRA ----
@@ -103,7 +104,8 @@ $PYTHON -m ochat.training_sft.train_single \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --use-lora \
     --experiment-name e2e_sft --run-name single_lora \
-    --tracking-uri "$MLFLOW_URI"
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope
 echo "  → output/single_lora/"
 
 # ---- Step 5: DeepSpeed full FT (1 GPU) ----
@@ -119,7 +121,8 @@ rm -rf output/deepspeed_full_ft
     --epochs 1 --max-steps "$MAX_STEPS" \
     --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment-name e2e_sft --run-name deepspeed_full_ft \
-    --tracking-uri "$MLFLOW_URI")
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope)
 echo "  → output/deepspeed_full_ft/"
 
 # ---- Step 6: DeepSpeed LoRA (1 GPU) ----
@@ -136,7 +139,8 @@ rm -rf output/deepspeed_lora
     --use-lora \
     --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment-name e2e_sft --run-name deepspeed_lora \
-    --tracking-uri "$MLFLOW_URI")
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope)
 echo "  → output/deepspeed_lora/"
 
 # ---- Done ----

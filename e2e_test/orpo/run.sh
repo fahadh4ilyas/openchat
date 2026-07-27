@@ -99,7 +99,8 @@ $PYTHON -m ochat.training_orpo.train_single \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --orpo-beta "$ORPO_BETA" \
     --experiment-name e2e_orpo --run-name orpo_full_ft \
-    --tracking-uri "$MLFLOW_URI"
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope
 echo "  → output/orpo_full_ft/"
 
 # ---- Step 4: Single-GPU LoRA ----
@@ -116,7 +117,8 @@ $PYTHON -m ochat.training_orpo.train_single \
     --use-lora \
     --orpo-beta "$ORPO_BETA" \
     --experiment-name e2e_orpo --run-name orpo_lora \
-    --tracking-uri "$MLFLOW_URI"
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope
 echo "  → output/orpo_lora/"
 
 # ---- Step 5: DeepSpeed full FT ----
@@ -134,7 +136,8 @@ DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
     --orpo-beta "$ORPO_BETA" \
     --deepspeed --deepspeed-config "$DS_CONFIG" \
     --experiment-name e2e_orpo --run-name orpo_deepspeed_ft \
-    --tracking-uri "$MLFLOW_URI")
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope)
 echo "  → output/orpo_deepspeed_ft/"
 
 # ---- Step 6: DeepSpeed LoRA ----
@@ -152,7 +155,8 @@ rm -rf output/orpo_deepspeed_lora
     --orpo-beta "$ORPO_BETA" \
     --deepspeed --deepspeed-config "$DS_CONFIG" \
     --experiment-name e2e_orpo --run-name orpo_deepspeed_lora \
-    --tracking-uri "$MLFLOW_URI")
+    --tracking-uri "$MLFLOW_URI" \
+    --use-fast-norm --use-fast-rope)
 echo "  → output/orpo_deepspeed_lora/"
 
 # ---- Done ----
