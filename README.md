@@ -401,7 +401,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --epochs 5 \
           --save-every 1 \
           --deepspeed \
-          --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 
 # LoRA fine-tuning (same script, add --use-lora)
 deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
@@ -416,7 +416,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --lora-r 32 \
           --lora-target-modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
           --deepspeed \
-          --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
 > Change `ochat.training_sft.train` to `ochat.training_sft.train_ring` for ring attention. Add `--use-qlora` for QLoRA. For ZERO offloading use `train_offload`.
@@ -496,7 +496,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --save-every 1 \
     --dpo-beta 0.1 \
     --deepspeed \
-    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
 For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
@@ -520,7 +520,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --dpo-beta 0.1 \
     --cpo-alpha 1.0 \
     --deepspeed \
-    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
 > `--cpo-alpha` controls the SFT weight (default `0.0` = pure DPO). When `> 0`, MLflow also logs `train/dpo_loss` and `train/sft_loss` component breakdowns. Reference: Xu et al., "Contrastive Preference Optimization" (arXiv:2401.08417).
@@ -588,7 +588,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_orpo.train \
     --save-every 1 \
     --orpo-beta 0.1 \
     --deepspeed \
-    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
 For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
@@ -621,7 +621,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --save-every 1 \
     --kto-beta 0.1 \
     --deepspeed \
-    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
 
 For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
@@ -687,7 +687,7 @@ Common flags across all training modes:
 | `--use-fast-norm` | false | Use custom CUDA RMS norm kernel |
 | `--use-fast-rope` | false | Use custom CUDA RoPE kernel |
 | `--deepspeed` | true | Enable DeepSpeed (required) |
-| `--deepspeed-config` | *required* | Path to DeepSpeed JSON config |
+| `--deepspeed_config` | *required* | Path to DeepSpeed JSON config |
 | **MLflow** |||
 | `--experiment-name` | *required* | MLflow experiment name |
 | `--run-name` | *required* | MLflow run name |

@@ -91,7 +91,6 @@ echo ""
 echo "=== Step 3/6: Single-GPU ORPO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_full_ft
 $PYTHON -m ochat.training_orpo.train_single \
-    --local-rank 0 \
     --model-path "$MODEL_PATH" \
     --data-prefix pretokenized/orpo_data \
     --save-path output/orpo_full_ft \
@@ -108,7 +107,6 @@ echo ""
 echo "=== Step 4/6: Single-GPU ORPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_lora
 $PYTHON -m ochat.training_orpo.train_single \
-    --local-rank 0 \
     --model-path "$MODEL_PATH" \
     --data-prefix pretokenized/orpo_data \
     --save-path output/orpo_lora \
@@ -134,7 +132,7 @@ DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
     --batch-max-len "$BATCH_MAX_LEN" \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --orpo-beta "$ORPO_BETA" \
-    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$DS_CONFIG" \
     --experiment-name e2e_orpo --run-name orpo_deepspeed_ft \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)
@@ -153,7 +151,7 @@ rm -rf output/orpo_deepspeed_lora
     --epochs 1 --max-steps "$MAX_STEPS" \
     --use-lora \
     --orpo-beta "$ORPO_BETA" \
-    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$DS_CONFIG" \
     --experiment-name e2e_orpo --run-name orpo_deepspeed_lora \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)

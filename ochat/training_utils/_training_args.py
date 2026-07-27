@@ -81,7 +81,7 @@ class LoraTrainingArgsMixin(BaseModel):
 
 def add_base_args(parser: argparse.ArgumentParser, base_lr: float = 3e-4):
     """Add common training arguments to an argparse parser."""
-    parser.add_argument("--local-rank", type=int, default=0)
+    parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--model-path", type=str, required=True)
     parser.add_argument("--data-prefix", type=str, required=True)
     parser.add_argument("--save-path", type=str, required=True)

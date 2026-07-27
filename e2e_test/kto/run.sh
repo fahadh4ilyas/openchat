@@ -100,7 +100,6 @@ echo ""
 echo "=== Step 4/7: Single-GPU KTO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/kto_full_ft
 $PYTHON -m ochat.training_kto.train_single \
-    --local-rank 0 \
     --model-path "$MODEL_PATH" \
     --data-prefix pretokenized/kto_data \
     --save-path output/kto_full_ft \
@@ -117,7 +116,6 @@ echo ""
 echo "=== Step 5/7: Single-GPU KTO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/kto_lora
 $PYTHON -m ochat.training_kto.train_single \
-    --local-rank 0 \
     --model-path "$MODEL_PATH" \
     --data-prefix pretokenized/kto_data \
     --save-path output/kto_lora \
@@ -143,7 +141,7 @@ DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
     --batch-max-len "$BATCH_MAX_LEN" \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --kto-beta "$KTO_BETA" \
-    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$DS_CONFIG" \
     --experiment-name e2e_kto --run-name kto_deepspeed_ft \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)
@@ -162,7 +160,7 @@ rm -rf output/kto_deepspeed_lora
     --epochs 1 --max-steps "$MAX_STEPS" \
     --use-lora \
     --kto-beta "$KTO_BETA" \
-    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --deepspeed --deepspeed_config "$DS_CONFIG" \
     --experiment-name e2e_kto --run-name kto_deepspeed_lora \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)

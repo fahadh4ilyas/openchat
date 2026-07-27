@@ -119,7 +119,7 @@ rm -rf output/deepspeed_full_ft
     --save-path "$SCRIPT_DIR/output/deepspeed_full_ft" \
     --batch-max-len "$BATCH_MAX_LEN" \
     --epochs 1 --max-steps "$MAX_STEPS" \
-    --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
+    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment-name e2e_sft --run-name deepspeed_full_ft \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)
@@ -137,7 +137,7 @@ rm -rf output/deepspeed_lora
     --batch-max-len "$BATCH_MAX_LEN" \
     --epochs 1 --max-steps "$MAX_STEPS" \
     --use-lora \
-    --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
+    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
     --experiment-name e2e_sft --run-name deepspeed_lora \
     --tracking-uri "$MLFLOW_URI" \
     --use-fast-norm --use-fast-rope)

@@ -148,7 +148,7 @@ class TestTrainingArgs:
         add_lora_args(parser)
 
         parsed = parser.parse_args([
-            "--local-rank", "0",
+            "--local_rank", "0",
             "--model-path", "/m",
             "--data-prefix", "/d",
             "--save-path", "/s",
@@ -166,7 +166,7 @@ class TestTrainingArgs:
         add_lora_args(parser)
 
         parsed = parser.parse_args([
-            "--local-rank", "0",
+            "--local_rank", "0",
             "--model-path", "/m", "--data-prefix", "/d", "--save-path", "/s",
             "--experiment-name", "test", "--run-name", "r1",
             "--use-qlora",
