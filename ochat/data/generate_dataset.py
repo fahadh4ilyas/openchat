@@ -416,7 +416,7 @@ def _delegate_to_train_type(train_type: str):
         cleaned_argv.append(arg)
     sys.argv = cleaned_argv
 
-    module_name = f"ochat.data.generate_dataset_{train_type}"
+    module_name = f"ochat.data.generate_{train_type}_dataset"
     try:
         module = importlib.import_module(module_name)
     except ImportError:
