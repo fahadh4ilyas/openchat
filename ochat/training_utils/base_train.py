@@ -320,6 +320,10 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
                 rejected_ref = rejected_t.cpu().numpy()
             return chosen_ref, rejected_ref
 
+    # Non-distributed (single-GPU): return cached result, skip recompute
+    if cache_hit:
+        return chosen_ref, rejected_ref
+
     if rank == 0:
         print(f"Precomputing reference log-probs for {split_name} split "
               f"(checksum {checksum}, caching to {cache_path})...")
@@ -330,11 +334,18 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
 
     model.disable_adapter_layers()
 
+    # Get dataset_path and processor for multimodal support
+    dataset_path = os.path.dirname(args.data_prefix) or "."
+    processor = None
+    if getattr(args, "has_processor", False):
+        from ochat.training_utils._common import load_tokenizer
+        processor = load_tokenizer(args)
+
     with torch.no_grad():
         for i in range(num_examples):
             example = dataset[[i]]  # list index preserves batch structure
 
-            chosen_t, chosen_info = batch_to_tensor(example, prefix="chosen_")
+            chosen_t, chosen_info = batch_to_tensor(example, dataset_path, processor, prefix="chosen_")
             chosen_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v)
                         for k, v in chosen_t.items()}
             chosen_logp = model_engine(
@@ -345,7 +356,7 @@ def ensure_dpo_ref_logps_cached(model_engine, dataset, args, split_name: str):
             ).logits.sum().item()
             chosen_ref[i] = chosen_logp
 
-            rejected_t, rejected_info = batch_to_tensor(example, prefix="rejected_")
+            rejected_t, rejected_info = batch_to_tensor(example, dataset_path, processor, prefix="rejected_")
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v)
                           for k, v in rejected_t.items()}
             rejected_logp = model_engine(
@@ -436,6 +447,10 @@ def ensure_kto_ref_logps_cached(model_engine, dataset, args, split_name: str):
                 ref_logp = ref_t.cpu().numpy()
             return ref_logp
 
+    # Non-distributed (single-GPU): return cached result, skip recompute
+    if cache_hit:
+        return ref_logp
+
     if rank == 0:
         print(f"Precomputing KTO reference log-probs for {split_name} split "
               f"(checksum {checksum}, caching to {cache_path})...")
@@ -445,10 +460,17 @@ def ensure_kto_ref_logps_cached(model_engine, dataset, args, split_name: str):
 
     model.disable_adapter_layers()
 
+    # Get dataset_path and processor for multimodal support
+    dataset_path = os.path.dirname(args.data_prefix) or "."
+    processor = None
+    if getattr(args, "has_processor", False):
+        from ochat.training_utils._common import load_tokenizer
+        processor = load_tokenizer(args)
+
     with torch.no_grad():
         for i in range(num_examples):
             example = dataset[[i]]
-            tensor, info = batch_to_tensor(example)
+            tensor, info = batch_to_tensor(example, dataset_path, processor)
             tensor = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v)
                       for k, v in tensor.items()}
 
