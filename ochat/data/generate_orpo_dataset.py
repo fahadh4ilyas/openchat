@@ -20,7 +20,6 @@ The chosen_ref_logp and rejected_ref_logp fields contain NaN sentinels
 (the ORPO trainer ignores them).
 """
 
-import sys
 from ochat.data.generate_dpo_dataset import DataArguments, generate_dataset
 
 

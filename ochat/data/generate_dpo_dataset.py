@@ -28,9 +28,6 @@ import orjson
 import pyarrow
 from pyarrow import parquet
 
-import torch
-import numpy as np
-
 
 class DataArguments(BaseModel):
     model_path: str = Field(...)
