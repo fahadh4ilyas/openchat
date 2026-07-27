@@ -22,8 +22,8 @@ from typing import List, Optional, Dict, Tuple
 
 from pydantic import ValidationError
 
-from ochat.config import MODEL_CONFIG_MAP, ConversationOpenAI, Conversation
-from ochat.config.conversation_template import Tool, ImageContentPart, VideoContentPart, Message
+from ochat.config import MODEL_CONFIG_MAP
+from ochat.config.conversation_template import ConversationOpenAI, Conversation, Tool, ImageContentPart, VideoContentPart, Message
 
 
 def job_print(job_id: int, *args, **kwargs):
