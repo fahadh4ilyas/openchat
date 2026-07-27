@@ -400,6 +400,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --batch-max-len BATCH_SIZE \
           --epochs 5 \
           --save-every 1 \
+            --use-fast-norm --use-fast-rope \
           --deepspeed \
           --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 
@@ -415,6 +416,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --lora-alpha 32 \
           --lora-r 32 \
           --lora-target-modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+          --use-fast-norm --use-fast-rope \
           --deepspeed \
           --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
@@ -436,7 +438,8 @@ python -m ochat.training_sft.train_single \
     --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
     --save-path PATH_TO_SAVE_MODEL \
     --batch-max-len BATCH_SIZE \
-    --epochs 5 --save-every 1
+    --epochs 5 --save-every 1 \
+    --use-fast-norm --use-fast-rope
 
 # DPO single-GPU
 python -m ochat.training_dpo.train_single \
@@ -445,6 +448,7 @@ python -m ochat.training_dpo.train_single \
     --save-path PATH_TO_SAVE_MODEL \
     --batch-max-len BATCH_SIZE \
     --epochs 5 --save-every 1 \
+    --use-fast-norm --use-fast-rope \
     --dpo-beta 0.1
 # Add --use-lora for LoRA (required if ref log-probs not precomputed)
 
@@ -455,6 +459,7 @@ python -m ochat.training_dpo.train_single \
     --save-path PATH_TO_SAVE_MODEL \
     --batch-max-len BATCH_SIZE \
     --epochs 5 --save-every 1 \
+    --use-fast-norm --use-fast-rope \
     --dpo-beta 0.1 --cpo-alpha 1.0
 # Add --use-lora for LoRA (required if ref log-probs not precomputed)
 
@@ -465,6 +470,7 @@ python -m ochat.training_orpo.train_single \
     --save-path PATH_TO_SAVE_MODEL \
     --batch-max-len BATCH_SIZE \
     --epochs 5 --save-every 1 \
+    --use-fast-norm --use-fast-rope \
     --orpo-beta 0.1
 
 # KTO single-GPU
@@ -474,6 +480,7 @@ python -m ochat.training_kto.train_single \
     --save-path PATH_TO_SAVE_MODEL \
     --batch-max-len BATCH_SIZE \
     --epochs 5 --save-every 1 \
+    --use-fast-norm --use-fast-rope \
     --kto-beta 0.1
 # Add --use-lora for LoRA (required if ref log-probs not precomputed)
 ```
@@ -495,6 +502,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --epochs 5 \
     --save-every 1 \
     --dpo-beta 0.1 \
+    --use-fast-norm --use-fast-rope \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
@@ -519,6 +527,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --save-every 1 \
     --dpo-beta 0.1 \
     --cpo-alpha 1.0 \
+    --use-fast-norm --use-fast-rope \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
@@ -587,6 +596,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_orpo.train \
     --epochs 5 \
     --save-every 1 \
     --orpo-beta 0.1 \
+    --use-fast-norm --use-fast-rope \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
@@ -620,6 +630,7 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --epochs 5 \
     --save-every 1 \
     --kto-beta 0.1 \
+    --use-fast-norm --use-fast-rope \
     --deepspeed \
     --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
 ```
