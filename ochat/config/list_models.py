@@ -49,6 +49,8 @@ def main():
             conv_type = "llama"
         elif name in GEMMA_FORMAT:
             conv_type = "gemma"
+        elif name == "zephyr":
+            conv_type = "zephyr"
         print(f"model_type:       {name}")
         print(f"model_class:      {model_class}")
         print(f"tokenizer_type:   {_tokenizer_type(has_processor)}")
@@ -63,6 +65,8 @@ def main():
                 conv_type = "llama"
             elif name in GEMMA_FORMAT:
                 conv_type = "gemma"
+            elif name == "zephyr":
+                conv_type = "zephyr"
             _print_row(name, max_context, has_processor, model_class, conv_type)
 
 
