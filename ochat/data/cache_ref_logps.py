@@ -33,27 +33,6 @@ from ochat.training_utils.numpy_dataset import NumpyDataset
 from ochat.training_utils._common import batch_to_tensor, _compute_dataset_checksum
 
 
-def _batch_to_tensor_dpo(row: dict) -> dict:
-    """Convert a single DPO row to model-compatible tensors (from generate_dpo_dataset.py)."""
-    keys = {
-        "seqlens": torch.long,
-        "nz_input_ids": torch.long,
-        "nz_position_ids": torch.long,
-        "nz_shifted_label_ids": torch.long,
-        "nz_shifted_loss_weights": torch.bfloat16,
-    }
-    batch = {}
-    for k, dtype in keys.items():
-        arr = np.array(row[k], dtype=np.int32 if dtype == torch.long else np.float32)
-        batch[k] = torch.from_numpy(arr).to(dtype)
-    batch["cu_seqlens"] = torch.nn.functional.pad(
-        batch["seqlens"].cumsum(-1, dtype=torch.int32), (1, 0)
-    )
-    batch["max_seqlen"] = batch["seqlens"].max().item()
-    del batch["seqlens"]
-    return batch
-
-
 def _detect_format(dataset: NumpyDataset) -> str:
     """Auto-detect whether the dataset is DPO or KTO format."""
     try:
@@ -69,7 +48,8 @@ def _detect_format(dataset: NumpyDataset) -> str:
     raise ValueError("Cannot detect dataset format: no 'chosen_ref_logp' (DPO) or 'label' (KTO) column found.")
 
 
-def _compute_dpo(model, dataset: NumpyDataset, device: torch.device, split_name: str):
+def _compute_dpo(model, dataset: NumpyDataset, device: torch.device,
+                 processor=None, dataset_path=None):
     """Compute DPO reference log-probs for chosen and rejected sides."""
     num_examples = len(dataset)
     chosen_ref = np.empty(num_examples, dtype=np.float32)
@@ -81,14 +61,11 @@ def _compute_dpo(model, dataset: NumpyDataset, device: torch.device, split_name:
             example = dataset[[i]]
 
             for side, out in (("chosen", chosen_ref), ("rejected", rejected_ref)):
-                single = {k: np.array(example[f"{side}_{k}"][0]) for k in [
-                    "seqlens", "nz_input_ids", "nz_position_ids",
-                    "nz_shifted_label_ids", "nz_shifted_loss_weights",
-                ]}
-                tensor = _batch_to_tensor_dpo(single)
-                tensor = {k: v.to(device) for k, v in tensor.items()}
+                tensor, info = batch_to_tensor(example, dataset_path, processor, prefix=f"{side}_")
+                tensor = {k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+                          for k, v in tensor.items()}
 
-                loss = model(**tensor, num_seq=1).loss
+                loss = model(**tensor, **info, num_seq=1).loss
                 if isinstance(loss, tuple):
                     loss, _ = loss
                 out[i] = -loss.item()
@@ -100,7 +77,8 @@ def _compute_dpo(model, dataset: NumpyDataset, device: torch.device, split_name:
     return chosen_ref, rejected_ref
 
 
-def _compute_kto(model, dataset: NumpyDataset, device: torch.device, split_name: str):
+def _compute_kto(model, dataset: NumpyDataset, device: torch.device,
+                 processor=None, dataset_path=None):
     """Compute KTO reference log-probs for single-side examples."""
     num_examples = len(dataset)
     ref_logp = np.empty(num_examples, dtype=np.float32)
@@ -109,7 +87,7 @@ def _compute_kto(model, dataset: NumpyDataset, device: torch.device, split_name:
     with torch.inference_mode():
         for i in range(num_examples):
             example = dataset[[i]]
-            tensor, info = batch_to_tensor(example)
+            tensor, info = batch_to_tensor(example, dataset_path, processor)
             tensor = {k: (v.to(device) if isinstance(v, torch.Tensor) else v)
                       for k, v in tensor.items()}
 
@@ -156,11 +134,20 @@ def main():
 
     # Load model
     print(f"Loading model {model_type} from {args.model_path}...")
-    model = MODEL_CONFIG_MAP[model_type].model_create_for_training(
+    model_config = MODEL_CONFIG_MAP[model_type]
+    model = model_config.model_create_for_training(
         args.model_path, dtype=torch.bfloat16,
     )
     model = model.to("cuda")
     model.config.use_cache = False
+
+    # Load processor for multimodal support (images/videos)
+    processor = None
+    dataset_path = os.path.dirname(args.data_prefix) or "."
+    if model_config.model_has_processor:
+        tokenizer = model_config.model_tokenizer_create(args.model_path)
+        processor = tokenizer
+        print(f"  Loaded processor for multimodal data")
 
     # Process each split
     splits = [("train", train_dataset)]
@@ -171,14 +158,16 @@ def main():
         print(f"\nComputing reference log-probs for {split_name} split ({len(dataset)} examples)...")
 
         if fmt == "dpo":
-            chosen, rejected = _compute_dpo(model, dataset, model.device, split_name)
+            chosen, rejected = _compute_dpo(model, dataset, model.device,
+                                            processor=processor, dataset_path=dataset_path)
             checksum = _compute_dataset_checksum(dataset, ["chosen_nz_input_ids", "rejected_nz_input_ids"])
             cache_path = f"{args.data_prefix}.{split_name}.ref_logps_cache.npz"
             np.savez(cache_path, checksum=checksum, chosen_ref_logp=chosen, rejected_ref_logp=rejected)
             print(f"  Saved {cache_path} (checksum {checksum}, {len(chosen)} pairs)")
 
         else:  # kto
-            ref_logp = _compute_kto(model, dataset, model.device, split_name)
+            ref_logp = _compute_kto(model, dataset, model.device,
+                                    processor=processor, dataset_path=dataset_path)
             checksum = _compute_dataset_checksum(dataset, ["nz_input_ids"])
             cache_path = f"{args.data_prefix}.{split_name}.kto_ref_logps_cache.npz"
             np.savez(cache_path, checksum=checksum, ref_logp=ref_logp)
