@@ -1,7 +1,8 @@
 """
 Generate training data based on conversations
 
-Usage: python -m ochat.data.generate_data --in-file sharegpt_gpt4.jsonl --tokenizer-name HF_REPO_NAME --out-dir .
+Usage: python -m ochat.data.generate_dataset --in-files sharegpt_gpt4.jsonl --model-type MODEL_TYPE --model-path BASE_REPO --out-prefix .
+       python -m ochat.data.generate_dataset --train-type dpo --in-files data_dpo.jsonl --model-type MODEL_TYPE --model-path BASE_REPO --out-prefix .
 """
 
 import gc
@@ -396,6 +397,35 @@ def generate_dataset(args: DataArguments):
         generate_split(eval_conversations, "eval", args)
 
 
+def _delegate_to_train_type(train_type: str):
+    """Remove --train-type from sys.argv and delegate to generate_dataset_<train_type>.main()."""
+    import sys
+    import importlib
+
+    cleaned_argv = []
+    skip_next = False
+    for arg in sys.argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--train-type":
+            skip_next = True
+            continue
+        if arg.startswith("--train-type="):
+            continue
+        cleaned_argv.append(arg)
+    sys.argv = cleaned_argv
+
+    module_name = f"ochat.data.generate_dataset_{train_type}"
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        raise ImportError(
+            f"Unknown train type '{train_type}': no module '{module_name}' found."
+        )
+    module.main()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", type=str, required=True)
@@ -422,7 +452,15 @@ if __name__ == "__main__":
     parser.add_argument("--split-files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
     parser.add_argument("--kto", action="store_true", help="KTO mode: add label and ref_logp columns for KTO training.")
     parser.add_argument("--ref-logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU, only meaningful with --kto).")
+    parser.add_argument("--train-type", type=str, default="sft",
+                        help="Training type: sft, dpo, orpo, or kto. "
+                             "If not sft, delegates to generate_dataset_<train_type>.py.")
     args = parser.parse_args()
+
+    if args.train_type != "sft":
+        _delegate_to_train_type(args.train_type)
+        import sys
+        sys.exit(0)
 
     args = DataArguments(**vars(args))
 

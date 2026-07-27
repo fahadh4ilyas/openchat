@@ -1,7 +1,8 @@
 """
 Convert ConversationOpenAI dataset to the target Conversation format.
 
-Usage: python -m convert_data --in-files data.jsonl --model-type <MODEL_TYPE> --model-path <PATH> --out-file out.jsonl
+Usage: python -m ochat.data.convert_dataset --in-files data.jsonl --model-type <MODEL_TYPE> --model-path <PATH> --out-file out.jsonl
+       python -m ochat.data.convert_dataset --train-type dpo --in-files data.jsonl --model-type <MODEL_TYPE> --model-path <PATH> --out-file out.jsonl
 """
 
 import os
@@ -224,6 +225,36 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str):
     return results
 
 
+def _delegate_to_train_type(train_type: str):
+    """Remove --train-type from sys.argv and delegate to convert_dataset_<train_type>.main()."""
+    import sys
+    import importlib
+
+    # Remove --train-type and its value from sys.argv
+    cleaned_argv = []
+    skip_next = False
+    for i, arg in enumerate(sys.argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--train-type":
+            skip_next = True
+            continue
+        if arg.startswith("--train-type="):
+            continue
+        cleaned_argv.append(arg)
+    sys.argv = cleaned_argv
+
+    module_name = f"ochat.data.convert_dataset_{train_type}"
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError:
+        raise ImportError(
+            f"Unknown train type '{train_type}': no module '{module_name}' found."
+        )
+    module.main()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", type=str, required=True)
@@ -233,7 +264,14 @@ def main():
     parser.add_argument("--max-workers", type=int, default=4)
     parser.add_argument("--max-jobs", type=int, default=10)
     parser.add_argument("--use-json-repair", action="store_true", help="Use json_repair for parsing arguments in tools")
+    parser.add_argument("--train-type", type=str, default="sft",
+                        help="Training type: sft, dpo, orpo, or kto. "
+                             "If not sft, delegates to convert_dataset_<train_type>.py.")
     args = parser.parse_args()
+
+    if args.train_type != "sft":
+        _delegate_to_train_type(args.train_type)
+        return
 
     if "chatml" not in args.model_type:
         raise ValueError("Currently only models using ChatML format are supported. Please specify a compatible --model-type.")

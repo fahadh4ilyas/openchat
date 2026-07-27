@@ -366,7 +366,7 @@ def generate_dataset(args: DataArguments):
         generate_split(eval_lines, "eval", args)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", type=str, required=True)
     parser.add_argument("--model-path", type=str, required=True)
@@ -392,3 +392,7 @@ if __name__ == "__main__":
     args = DataArguments(**vars(args))
 
     generate_dataset(args)
+
+
+if __name__ == "__main__":
+    main()

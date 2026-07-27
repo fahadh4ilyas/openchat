@@ -24,7 +24,7 @@ import sys
 from ochat.data.generate_dpo_dataset import DataArguments, generate_dataset
 
 
-if __name__ == "__main__":
+def main():
     # ORPO always skips ref log-probs — remove --ref-logps if present
     args_list = [a for a in sys.argv[1:] if a != "--ref-logps"]
 
@@ -54,3 +54,7 @@ if __name__ == "__main__":
     args = DataArguments(**vars(args), ref_logps=False)
 
     generate_dataset(args)
+
+
+if __name__ == "__main__":
+    main()

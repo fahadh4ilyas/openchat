@@ -64,7 +64,7 @@ mkdir -p converted pretokenized output
 
 # ---- Step 1: Convert ----
 echo "=== Step 1/7: Convert OpenAI paired JSONL → Conversation format ==="
-$PYTHON -m ochat.data.convert_dataset_dpo \
+$PYTHON -m ochat.data.convert_dataset --train-type dpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files data_dpo.jsonl \
@@ -74,7 +74,7 @@ echo "  → $(wc -l < converted/train_dpo.jsonl) pairs"
 # ---- Step 2: Tokenize (skip ref log-probs for speed) ----
 echo ""
 echo "=== Step 2/7: Tokenize → parquet ==="
-$PYTHON -m ochat.data.generate_dpo_dataset \
+$PYTHON -m ochat.data.generate_dataset --train-type dpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files converted/train_dpo.jsonl \

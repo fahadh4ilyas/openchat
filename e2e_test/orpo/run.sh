@@ -64,7 +64,7 @@ mkdir -p converted pretokenized output
 
 # ---- Step 1: Convert (ORPO uses same format as DPO) ----
 echo "=== Step 1/6: Convert OpenAI paired JSONL → Conversation format ==="
-$PYTHON -m ochat.data.convert_dataset_orpo \
+$PYTHON -m ochat.data.convert_dataset --train-type orpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files data_orpo.jsonl \
@@ -74,7 +74,7 @@ echo "  → $(wc -l < converted/train_orpo.jsonl) pairs"
 # ---- Step 2: Tokenize (no ref log-probs needed for ORPO) ----
 echo ""
 echo "=== Step 2/6: Tokenize → parquet ==="
-$PYTHON -m ochat.data.generate_orpo_dataset \
+$PYTHON -m ochat.data.generate_dataset --train-type orpo \
     --model-type "$MODEL_TYPE" \
     --model-path "$MODEL_PATH" \
     --in-files converted/train_orpo.jsonl \

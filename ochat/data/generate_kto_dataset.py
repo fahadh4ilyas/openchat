@@ -24,7 +24,7 @@ was not used).
 from ochat.data.generate_dataset import DataArguments, generate_dataset
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-type", type=str, required=True)
@@ -54,3 +54,7 @@ if __name__ == "__main__":
     args = DataArguments(**vars(args), kto=True)
 
     generate_dataset(args)
+
+
+if __name__ == "__main__":
+    main()

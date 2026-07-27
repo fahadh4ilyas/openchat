@@ -13,12 +13,16 @@ Usage: python -m ochat.data.convert_dataset_orpo \
     --in-files data.jsonl --out-file out.jsonl --pair-label ORPO
 """
 
-from ochat.data.convert_dataset_dpo import main
+import sys
 
 
-if __name__ == "__main__":
-    import sys
+def main():
     if "--pair-label" not in sys.argv:
         sys.argv.append("--pair-label")
         sys.argv.append("ORPO")
+    from ochat.data.convert_dataset_dpo import main as _dpo_main
+    _dpo_main()
+
+
+if __name__ == "__main__":
     main()

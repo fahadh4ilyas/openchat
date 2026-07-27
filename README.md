@@ -266,80 +266,70 @@ KTO example (unpaired, each line is independently desirable or undesirable):
 
 If your data is in the OpenAI chat-completions format (list of `messages` with `role`/`content`), use the conversion tools to transform it into OpenChat `Conversation` objects. These tools round-trip through the model's tokenizer to correctly handle thinking blocks, tool calls, and other template-specific transformations.
 
-**SFT conversion** — one `ConversationOpenAI` per line:
+All conversion is done through a single entry point with `--train-type`:
 
 ```bash
+# SFT conversion (default)
 python -m ochat.data.convert_dataset \
     --model-type MODEL_TYPE_chatml \
     --model-path BASE_REPO \
     --in-files openai_data.jsonl \
     --out-file openchat_data.jsonl
-```
 
-**DPO conversion** — `{"chosen": <ConversationOpenAI>, "rejected": <ConversationOpenAI>}` per line:
-
-```bash
-python -m ochat.data.convert_dataset_dpo \
+# DPO conversion
+python -m ochat.data.convert_dataset --train-type dpo \
     --model-type MODEL_TYPE_chatml \
     --model-path BASE_REPO \
     --in-files openai_dpo_data.jsonl \
     --out-file openchat_dpo_data.jsonl
-```
 
-> Both converters require a `chatml` model type (e.g. `qwen3_5_chatml`). Multi-turn conversations are split at each weighted assistant turn. The DPO converter aligns chosen/rejected non-assistant messages and takes the union of turn positions. Use `--max-workers` to control parallelism.
+# ORPO conversion (same format as DPO)
+python -m ochat.data.convert_dataset --train-type orpo \
+    --model-type MODEL_TYPE_chatml \
+    --model-path BASE_REPO \
+    --in-files openai_data.jsonl \
+    --out-file openchat_orpo_data.jsonl
 
-**KTO conversion** — single conversations with `"label"` field:
-
-```bash
-python -m ochat.data.convert_dataset_kto \
+# KTO conversion
+python -m ochat.data.convert_dataset --train-type kto \
     --model-type MODEL_TYPE_chatml \
     --model-path BASE_REPO \
     --in-files openai_data.jsonl \
     --out-file openchat_kto_data.jsonl
 ```
 
-> KTO input JSONL: `{"messages": [...], "label": true}` for desirable, `"label": false` for undesirable. Uses the same converter as SFT; label defaults to `true` if omitted.
+> The old direct module paths (`convert_dataset_dpo`, `convert_dataset_orpo`, `convert_dataset_kto`) still work and are equivalent to using `--train-type`.
 
 ### Pre-tokenizing the Dataset
 
-You'll then need to pre-tokenize the dataset using the command (please specify a filename as `PRETOKENIZED_DATA_OUTPUT_PATH` to store the pretokenized dataset):
+You'll then need to pre-tokenize the dataset using the command (please specify a filename as `PRETOKENIZED_DATA_OUTPUT_PATH` to store the pretokenized dataset).
 
-**SFT:**
+All pre-tokenization is done through a single entry point with `--train-type`:
 
 ```bash
+# SFT (default)
 python -m ochat.data.generate_dataset \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data.jsonl \
     --out-prefix PRETOKENIZED_DATA_OUTPUT_PATH
-```
 
-**DPO:**
-
-```bash
-python -m ochat.data.generate_dpo_dataset \
+# DPO
+python -m ochat.data.generate_dataset --train-type dpo \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_dpo.jsonl \
     --out-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH
-```
 
-**ORPO:**
-
-```bash
-python -m ochat.data.generate_orpo_dataset \
+# ORPO (always skips reference log-probs)
+python -m ochat.data.generate_dataset --train-type orpo \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_orpo.jsonl \
     --out-prefix PRETOKENIZED_ORPO_DATA_OUTPUT_PATH
-```
 
-> ORPO uses the same data format as DPO and always skips reference log-prob computation (they aren't needed).
-
-**KTO:**
-
-```bash
-python -m ochat.data.generate_kto_dataset \
+# KTO
+python -m ochat.data.generate_dataset --train-type kto \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_kto.jsonl \
@@ -347,7 +337,7 @@ python -m ochat.data.generate_kto_dataset \
     --ref-logps
 ```
 
-> KTO uses `generate_kto_dataset.py` (a thin wrapper around `generate_dataset.py --kto`) which adds `label` + `ref_logp` columns. `--ref-logps` is opt-in reference log-prob computation. If omitted, training will compute ref log-probs online via LoRA.
+> The old direct module paths (`generate_dataset_dpo`, `generate_dataset_orpo`, `generate_dataset_kto`) still work and are equivalent to using `--train-type`.
 
 Key flags for all commands:
 
@@ -606,7 +596,7 @@ For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags
 Pre-tokenize data with (no reference log-probs needed):
 
 ```bash
-python -m ochat.data.generate_orpo_dataset \
+python -m ochat.data.generate_dataset --train-type orpo \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_orpo.jsonl \
@@ -641,7 +631,7 @@ For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags
 Pre-tokenize with:
 
 ```bash
-python -m ochat.data.generate_dataset --kto --ref-logps \
+python -m ochat.data.generate_dataset --train-type kto --ref-logps \
     --model-type MODEL_TYPE --model-path BASE_REPO \
     --in-files data_kto.jsonl --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
 ```
