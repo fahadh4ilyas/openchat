@@ -237,10 +237,10 @@ def _delegate_to_train_type(train_type: str):
         if skip_next:
             skip_next = False
             continue
-        if arg == "--train-type":
+        if arg in ["--train-type", "--train_type"]:
             skip_next = True
             continue
-        if arg.startswith("--train-type="):
+        if arg.startswith("--train-type=") or arg.startswith("--train_type="):
             continue
         cleaned_argv.append(arg)
     sys.argv = cleaned_argv
@@ -257,14 +257,14 @@ def _delegate_to_train_type(train_type: str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", type=str, required=True)
-    parser.add_argument("--model-path", type=str, required=True)
-    parser.add_argument("--in-files", type=str, nargs="+", required=True)
-    parser.add_argument("--out-file", type=str, required=True)
-    parser.add_argument("--max-workers", type=int, default=4)
-    parser.add_argument("--max-jobs", type=int, default=10)
-    parser.add_argument("--use-json-repair", action="store_true", help="Use json_repair for parsing arguments in tools")
-    parser.add_argument("--train-type", type=str, default="sft",
+    parser.add_argument("--model-type", "--model_type", type=str, required=True)
+    parser.add_argument("--model-path", "--model_path", type=str, required=True)
+    parser.add_argument("--in-files", "--in_files", type=str, nargs="+", required=True)
+    parser.add_argument("--out-file", "--out_file", type=str, required=True)
+    parser.add_argument("--max-workers", "--max_workers", type=int, default=4)
+    parser.add_argument("--max-jobs", "--max_jobs", type=int, default=10)
+    parser.add_argument("--use-json-repair", "--use_json_repair", action="store_true", help="Use json_repair for parsing arguments in tools")
+    parser.add_argument("--train-type", "--train_type", type=str, default="sft",
                         help="Training type: sft, dpo, orpo, or kto. "
                              "If not sft, delegates to convert_dataset_<train_type>.py.")
     args = parser.parse_args()

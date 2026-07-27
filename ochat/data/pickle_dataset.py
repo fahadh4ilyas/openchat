@@ -71,7 +71,7 @@ def main(args: DataArguments):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--data-prefix', type=str, required=True)
+    parser.add_argument('--data-prefix', '--data_prefix', type=str, required=True)
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))

@@ -59,13 +59,15 @@ from ochat.training_utils.numpy_dataset import NumpyDataset
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
     """ORPO training arguments (base_lr=3e-4 full FT, 1e-2 LoRA)."""
     orpo_beta: float = 0.1
+    use_ring: bool = False
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--use-ring", "--use_ring", action="store_true")
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--orpo-beta", type=float, default=0.1,
+    parser.add_argument("--orpo-beta", "--orpo_beta", type=float, default=0.1,
                         help="ORPO temperature (λ in the paper, default 0.1)")
     parser = deepspeed.add_config_arguments(parser)
     return parser.parse_args()

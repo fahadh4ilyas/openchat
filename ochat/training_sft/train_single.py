@@ -44,8 +44,7 @@ from ochat.training_utils.numpy_dataset import NumpyDataset
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
     """Single-GPU SFT training arguments (base_lr=3e-4 full FT, 1e-2 LoRA)."""
-
-    device: Optional[str] = Field(None)
+    pass
 
 
 def parse_args():

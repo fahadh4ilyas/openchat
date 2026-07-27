@@ -64,7 +64,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--kto-beta", type=float, default=0.1, help="KTO temperature parameter")
+    parser.add_argument("--kto-beta", "--kto_beta", type=float, default=0.1, help="KTO temperature parameter")
     parser = deepspeed.add_config_arguments(parser)
     return parser.parse_args()
 

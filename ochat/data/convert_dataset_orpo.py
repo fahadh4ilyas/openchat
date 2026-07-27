@@ -17,7 +17,7 @@ import sys
 
 
 def main():
-    if "--pair-label" not in sys.argv:
+    if "--pair-label" not in sys.argv or "--pair_label" not in sys.argv:
         sys.argv.append("--pair-label")
         sys.argv.append("ORPO")
     from ochat.data.convert_dataset_dpo import main as _dpo_main

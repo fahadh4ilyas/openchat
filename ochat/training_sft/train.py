@@ -52,11 +52,12 @@ except ImportError:
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
     """SFT training arguments. LoRA fields are ignored when --use-lora is not set."""
-    pass
+    use_ring: bool = False
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--use-ring", "--use_ring", action="store_true")
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
     parser = deepspeed.add_config_arguments(parser)

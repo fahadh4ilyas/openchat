@@ -53,7 +53,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--orpo-beta", type=float, default=0.1,
+    parser.add_argument("--orpo-beta", "--orpo_beta", type=float, default=0.1,
                         help="ORPO temperature (λ in the paper, default 0.1)")
     return parser.parse_args()
 

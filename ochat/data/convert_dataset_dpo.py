@@ -461,15 +461,15 @@ def process_batch(job_id: int, batch: List[str], args, out_dir: str, pair_label:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", type=str, required=True)
-    parser.add_argument("--model-path", type=str, required=True)
-    parser.add_argument("--in-files", type=str, nargs="+", required=True)
-    parser.add_argument("--out-file", type=str, required=True)
-    parser.add_argument("--max-workers", type=int, default=4)
-    parser.add_argument("--max-jobs", type=int, default=10)
-    parser.add_argument("--use-json-repair", action="store_true",
+    parser.add_argument("--model-type", "--model_type", type=str, required=True)
+    parser.add_argument("--model-path", "--model_path", type=str, required=True)
+    parser.add_argument("--in-files", "--in_files", type=str, nargs="+", required=True)
+    parser.add_argument("--out-file", "--out_file", type=str, required=True)
+    parser.add_argument("--max-workers", "--max_workers", type=int, default=4)
+    parser.add_argument("--max-jobs", "--max_jobs", type=int, default=10)
+    parser.add_argument("--use-json-repair", "--use_json_repair", action="store_true",
                         help="Use json_repair for parsing arguments in tools")
-    parser.add_argument("--pair-label", type=str, default="DPO",
+    parser.add_argument("--pair-label", "--pair_label", type=str, default="DPO",
                         help="Label for log messages (e.g. DPO, ORPO)")
     args = parser.parse_args()
 

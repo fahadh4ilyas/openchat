@@ -408,10 +408,10 @@ def _delegate_to_train_type(train_type: str):
         if skip_next:
             skip_next = False
             continue
-        if arg == "--train-type":
+        if arg in ["--train-type", "--train_type"]:
             skip_next = True
             continue
-        if arg.startswith("--train-type="):
+        if arg.startswith("--train-type=") or arg.startswith("--train_type="):
             continue
         cleaned_argv.append(arg)
     sys.argv = cleaned_argv
@@ -428,31 +428,31 @@ def _delegate_to_train_type(train_type: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-type", type=str, required=True)
-    parser.add_argument("--model-path", type=str, required=True)
+    parser.add_argument("--model-type", "--model_type", type=str, required=True)
+    parser.add_argument("--model-path", "--model_path", type=str, required=True)
 
-    parser.add_argument("--in-files", type=str, nargs="+", required=True)
-    parser.add_argument("--out-prefix", type=str, required=True)
+    parser.add_argument("--in-files", "--in_files", type=str, nargs="+", required=True)
+    parser.add_argument("--out-prefix", "--out_prefix", type=str, required=True)
 
-    parser.add_argument("--per-sequence-loss", action="store_true", help="If true, the total weight of the sequence is divided by the number of tokens in the sequence. If false, the total weight is used as is.")
-    parser.add_argument("--force-eos-token", action="store_true", help="If true, the EOS token is added at the end of every sequence with non zero weight.")
-    parser.add_argument("--eos-final", action="store_true", help="If true, the EOS token is added to the very end of the sequence, even if the last token is not a EOS token.")
-    parser.add_argument("--max-seq-length", type=int, default=None, help="If specified, the sequence is truncated to this length. If not specified, the maximum context length of the model is used.")
-    parser.add_argument("--ignore-index", type=int, default=0, help="The value used to pad the labels. If 0, the PAD_TOKEN_ID is used which is 0.")
+    parser.add_argument("--per-sequence-loss", "--per_sequence_loss", action="store_true", help="If true, the total weight of the sequence is divided by the number of tokens in the sequence. If false, the total weight is used as is.")
+    parser.add_argument("--force-eos-token", "--force_eos_token", action="store_true", help="If true, the EOS token is added at the end of every sequence with non zero weight.")
+    parser.add_argument("--eos-final", "--eos_final", action="store_true", help="If true, the EOS token is added to the very end of the sequence, even if the last token is not a EOS token.")
+    parser.add_argument("--max-seq-length", "--max_seq_length", type=int, default=None, help="If specified, the sequence is truncated to this length. If not specified, the maximum context length of the model is used.")
+    parser.add_argument("--ignore-index", "--ignore_index", type=int, default=0, help="The value used to pad the labels. If 0, the PAD_TOKEN_ID is used which is 0.")
     parser.add_argument("--seed", type=int, default=42, help="The seed used to shuffle the data.")
-    parser.add_argument("--eval-ratio", type=float, default=0.0, help="The ratio of the data used for evaluation. If 0.0, no evaluation data is generated.")
-    parser.add_argument("--data-length-multiple-of", type=int, default=1, help="The length of the data is a multiple of this value. If 1, no padding is done.")
-    parser.add_argument("--pretokenized-in-files", action="store_true", help="If true, the input files are pretokenized. If false, the input files are not pretokenized.")
-    parser.add_argument("--pretraining-data", action="store_true", help="If true, the input files are pretraining data. If false, the input files are not pretraining data.")
-    parser.add_argument("--ignore-last-token", action="store_true", help="If true, the last token of sequence is ignored. If false, the labels will be padded to match the input sequence.")
-    parser.add_argument("--separate-think", action="store_true", help="If true, if the sequence contains a think token, the sequence will be separated into multiple sequences with thinking only on the end of the sequence. If false, the sequence will be treated as a single sequence.")
-    parser.add_argument("--max-workers", type=int, default=None)
-    parser.add_argument("--max-jobs", type=int, default=10)
-    parser.add_argument("--num-splits", type=int, default=10, help="Number of split jobs to create.")
-    parser.add_argument("--split-files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
+    parser.add_argument("--eval-ratio", "--eval_ratio", type=float, default=0.0, help="The ratio of the data used for evaluation. If 0.0, no evaluation data is generated.")
+    parser.add_argument("--data-length-multiple-of", "--data_length_multiple_of", type=int, default=1, help="The length of the data is a multiple of this value. If 1, no padding is done.")
+    parser.add_argument("--pretokenized-in-files", "--pretokenized_in_files", action="store_true", help="If true, the input files are pretokenized. If false, the input files are not pretokenized.")
+    parser.add_argument("--pretraining-data", "--pretraining_data", action="store_true", help="If true, the input files are pretraining data. If false, the input files are not pretraining data.")
+    parser.add_argument("--ignore-last-token", "--ignore_last_token", action="store_true", help="If true, the last token of sequence is ignored. If false, the labels will be padded to match the input sequence.")
+    parser.add_argument("--separate-think", "--separate_think", action="store_true", help="If true, if the sequence contains a think token, the sequence will be separated into multiple sequences with thinking only on the end of the sequence. If false, the sequence will be treated as a single sequence.")
+    parser.add_argument("--max-workers", "--max_workers", type=int, default=None)
+    parser.add_argument("--max-jobs", "--max_jobs", type=int, default=10)
+    parser.add_argument("--num-splits", "--num_splits", type=int, default=10, help="Number of split jobs to create.")
+    parser.add_argument("--split-files", "--split_files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
     parser.add_argument("--kto", action="store_true", help="KTO mode: add label and ref_logp columns for KTO training.")
-    parser.add_argument("--ref-logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU, only meaningful with --kto).")
-    parser.add_argument("--train-type", type=str, default="sft",
+    parser.add_argument("--ref-logps", "--ref_logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU, only meaningful with --kto).")
+    parser.add_argument("--train-type", "--train_type", type=str, default="sft",
                         help="Training type: sft, dpo, orpo, or kto. "
                              "If not sft, delegates to generate_dataset_<train_type>.py.")
     args = parser.parse_args()

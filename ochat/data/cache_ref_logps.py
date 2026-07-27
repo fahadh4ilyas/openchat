@@ -130,9 +130,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Precompute reference log-probs for a pretokenized DPO or KTO dataset."
     )
-    parser.add_argument("--data-prefix", type=str, required=True,
+    parser.add_argument("--data-prefix", "--data_prefix", type=str, required=True,
                         help="Path prefix to pretokenized .parquet files")
-    parser.add_argument("--model-path", type=str, required=True,
+    parser.add_argument("--model-path", "--model_path", type=str, required=True,
                         help="HuggingFace repo or local path to the base model")
     args = parser.parse_args()
 

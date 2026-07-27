@@ -59,7 +59,6 @@ except ImportError:
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
     """DPO training arguments."""
-    base_lr: float = 3e-4
     dpo_beta: float = 0.1
     loss_type: str = "sigmoid"
     label_smoothing: float = 0.0
@@ -70,19 +69,19 @@ class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--use-ring", action="store_true")
+    parser.add_argument("--use-ring", "--use_ring", action="store_true")
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--dpo-beta", type=float, default=0.1, help="DPO temperature parameter")
-    parser.add_argument("--loss-type", type=str, default="sigmoid",
+    parser.add_argument("--dpo-beta", "--dpo_beta", type=float, default=0.1, help="DPO temperature parameter")
+    parser.add_argument("--loss-type", "--loss_type", type=str, default="sigmoid",
                         help="DPO loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, "
                              "bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, "
                              "sft, sigmoid_norm")
-    parser.add_argument("--label-smoothing", type=float, default=0.0,
+    parser.add_argument("--label-smoothing", "--label_smoothing", type=float, default=0.0,
                         help="Label smoothing ε (for exo_pair, robust, aot, aot_unpaired)")
-    parser.add_argument("--discopop-tau", type=float, default=0.05,
+    parser.add_argument("--discopop-tau", "--discopop_tau", type=float, default=0.05,
                         help="DiscoPOP temperature τ")
-    parser.add_argument("--cpo-alpha", type=float, default=0.0,
+    parser.add_argument("--cpo-alpha", "--cpo_alpha", type=float, default=0.0,
                         help="CPO SFT weight (0 = pure DPO, >0 = CPO. Default: 0)")
     parser = deepspeed.add_config_arguments(parser)
     return parser.parse_args()
