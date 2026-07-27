@@ -57,7 +57,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--kto_beta", type=float, default=0.1, help="KTO temperature parameter")
+    parser.add_argument("--kto-beta", type=float, default=0.1, help="KTO temperature parameter")
     return parser.parse_args()
 
 
@@ -177,7 +177,7 @@ def train(args):
             "KTO requires reference log-probs. They were not precomputed during preprocessing "
             "(use --ref-logps with generate_kto_dataset.py). "
             "Without precomputed ref log-probs, training must compute them from the frozen base model, "
-            "which requires LoRA/QLoRA (--use_lora or --use_qlora)."
+            "which requires LoRA/QLoRA (--use-lora or --use-qlora)."
         )
 
     train_loader = create_dataloader(args, train_dataset)

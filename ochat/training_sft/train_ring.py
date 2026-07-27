@@ -51,7 +51,7 @@ except ImportError:
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """Ring-attention training arguments. LoRA fields are ignored when --use_lora is not set."""
+    """Ring-attention training arguments. LoRA fields are ignored when --use-lora is not set."""
     pass
 
 

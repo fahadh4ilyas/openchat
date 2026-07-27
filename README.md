@@ -393,33 +393,33 @@ Other hyperparameters have been carefully selected as the default. Furthermore, 
 NUM_GPUS=8
 
 # Full fine-tuning
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
-          --model_path BASE_REPO \
-          --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
-          --save_path PATH_TO_SAVE_MODEL \
-          --batch_max_len BATCH_SIZE \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+          --model-path BASE_REPO \
+          --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+          --save-path PATH_TO_SAVE_MODEL \
+          --batch-max-len BATCH_SIZE \
           --epochs 5 \
-          --save_every 1 \
+          --save-every 1 \
           --deepspeed \
-          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+          --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 
-# LoRA fine-tuning (same script, add --use_lora)
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
-          --model_path BASE_REPO \
-          --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
-          --save_path PATH_TO_SAVE_MODEL \
-          --batch_max_len BATCH_SIZE \
+# LoRA fine-tuning (same script, add --use-lora)
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+          --model-path BASE_REPO \
+          --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+          --save-path PATH_TO_SAVE_MODEL \
+          --batch-max-len BATCH_SIZE \
           --epochs 50 \
-          --save_every 10 \
-          --use_lora \
-          --lora_alpha 32 \
-          --lora_r 32 \
-          --lora_target_modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
+          --save-every 10 \
+          --use-lora \
+          --lora-alpha 32 \
+          --lora-r 32 \
+          --lora-target-modules q_proj k_proj v_proj o_proj gate_proj up_proj down_proj \
           --deepspeed \
-          --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+          --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> Change `ochat.training_sft.train` to `ochat.training_sft.train_ring` for ring attention. Add `--use_qlora` for QLoRA. For ZERO offloading use `train_offload`.
+> Change `ochat.training_sft.train` to `ochat.training_sft.train_ring` for ring attention. Add `--use-qlora` for QLoRA. For ZERO offloading use `train_offload`.
 
 </details>
 
@@ -432,50 +432,50 @@ For development, debugging, or single-GPU setups, use the `train_single.py` scri
 ```bash
 # SFT single-GPU
 python -m ochat.training_sft.train_single \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
-    --epochs 5 --save_every 1
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
+    --epochs 5 --save-every 1
 
 # DPO single-GPU
 python -m ochat.training_dpo.train_single \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
-    --epochs 5 --save_every 1 \
-    --dpo_beta 0.1
-# Add --use_lora for LoRA (required if ref log-probs not precomputed)
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
+    --epochs 5 --save-every 1 \
+    --dpo-beta 0.1
+# Add --use-lora for LoRA (required if ref log-probs not precomputed)
 
 # CPO single-GPU (DPO + SFT term)
 python -m ochat.training_dpo.train_single \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
-    --epochs 5 --save_every 1 \
-    --dpo_beta 0.1 --cpo_alpha 1.0
-# Add --use_lora for LoRA (required if ref log-probs not precomputed)
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
+    --epochs 5 --save-every 1 \
+    --dpo-beta 0.1 --cpo-alpha 1.0
+# Add --use-lora for LoRA (required if ref log-probs not precomputed)
 
 # ORPO single-GPU (full FT or LoRA)
 python -m ochat.training_orpo.train_single \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
-    --epochs 5 --save_every 1 \
-    --orpo_beta 0.1
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
+    --epochs 5 --save-every 1 \
+    --orpo-beta 0.1
 
 # KTO single-GPU
 python -m ochat.training_kto.train_single \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
-    --epochs 5 --save_every 1 \
-    --kto_beta 0.1
-# Add --use_lora for LoRA (required if ref log-probs not precomputed)
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
+    --epochs 5 --save-every 1 \
+    --kto-beta 0.1
+# Add --use-lora for LoRA (required if ref log-probs not precomputed)
 ```
 
 > Single-GPU training supports all the same flags as distributed training (LoRA, QLoRA, fast kernels, etc.) except DeepSpeed-specific options.
@@ -487,53 +487,53 @@ DPO training supports full fine-tuning when ref log-probs are precomputed (`--re
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_dpo.train \
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
     --epochs 5 \
-    --save_every 1 \
-    --dpo_beta 0.1 \
+    --save-every 1 \
+    --dpo-beta 0.1 \
     --deepspeed \
-    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
 
-> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). DPO supports `--use_ring` for ring attention, `--use_qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT.
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). DPO supports `--use-ring` for ring attention, `--use-qlora` for quantized LoRA, and the same checkpoint/eval/MLflow flags as SFT.
 
 ##### CPO (Contrastive Preference Optimization)
 
-CPO adds an SFT term to the DPO loss: `L_CPO = L_DPO + α · L_SFT`. This encourages the policy to directly maximize the likelihood of chosen responses while still learning from preference pairs. Reuses the same paired DPO data format unchanged — just add `--cpo_alpha`:
+CPO adds an SFT term to the DPO loss: `L_CPO = L_DPO + α · L_SFT`. This encourages the policy to directly maximize the likelihood of chosen responses while still learning from preference pairs. Reuses the same paired DPO data format unchanged — just add `--cpo-alpha`:
 
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_dpo.train \
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
     --epochs 5 \
-    --save_every 1 \
-    --dpo_beta 0.1 \
-    --cpo_alpha 1.0 \
+    --save-every 1 \
+    --dpo-beta 0.1 \
+    --cpo-alpha 1.0 \
     --deepspeed \
-    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-> `--cpo_alpha` controls the SFT weight (default `0.0` = pure DPO). When `> 0`, MLflow also logs `train/dpo_loss` and `train/sft_loss` component breakdowns. Reference: Xu et al., "Contrastive Preference Optimization" (arXiv:2401.08417).
+> `--cpo-alpha` controls the SFT weight (default `0.0` = pure DPO). When `> 0`, MLflow also logs `train/dpo_loss` and `train/sft_loss` component breakdowns. Reference: Xu et al., "Contrastive Preference Optimization" (arXiv:2401.08417).
 
 #### DPO Loss Variants
 
-DPO supports 15 loss variants via the `--loss_type` flag. All share the same paired
+DPO supports 15 loss variants via the `--loss-type` flag. All share the same paired
 chosen/rejected data format and reference model — they differ only in how the loss is
 computed from the policy/reference log-ratio.
 
 **Simple variants** (no extra flags):
 
-| `--loss_type` | Formula | Description |
+| `--loss-type` | Formula | Description |
 |---------------|---------|-------------|
 | `sigmoid` | `−log σ(β·Δ)` | Standard DPO. **Default.** |
 | `hinge` | `max(0, 1 − β·Δ)` | Hard margin, no softening for near-boundary pairs |
@@ -545,14 +545,14 @@ computed from the policy/reference log-ratio.
 
 **Token-aware variants** (use per-token average log-probs, not sums):
 
-| `--loss_type` | Formula | Description |
+| `--loss-type` | Formula | Description |
 |---------------|---------|-------------|
 | `ipo` | `(Δ_avg − 1/(2β))²` | Identity Preference Opt, β=τ |
 | `sigmoid_norm` | `−log σ(β·Δ/len)` | Sigmoid with length-normalized delta |
 
-**Smoothing variants** (use `--label_smoothing ε`):
+**Smoothing variants** (use `--label-smoothing ε`):
 
-| `--loss_type` | Formula | Description |
+| `--loss-type` | Formula | Description |
 |---------------|---------|-------------|
 | `exo_pair` | `KL(p_θ ‖ p_rh)` | EXO: minimizes KL to ε-smoothed human preference |
 | `robust` | `−(1−ε)log σ(βΔ) − ε·log σ(−βΔ)` | Models ε probability of label flip (recommended ε=0.1) |
@@ -561,13 +561,13 @@ computed from the policy/reference log-ratio.
 
 **Special variants:**
 
-| `--loss_type` | Flags | Description |
+| `--loss-type` | Flags | Description |
 |---------------|-------|-------------|
-| `discopop` | `--discopop_tau 0.05` | DiscoPOP: sigmoid-gated modulation at temperature τ |
-| `sft` | — | Pure SFT on chosen (ignores rejected); prefer `--cpo_alpha` |
+| `discopop` | `--discopop-tau 0.05` | DiscoPOP: sigmoid-gated modulation at temperature τ |
+| `sft` | — | Pure SFT on chosen (ignores rejected); prefer `--cpo-alpha` |
 
 > Δ = `chosen_score − rejected_score` (policy log-ratio minus reference log-ratio).
-> All variants work with CPO: `--cpo_alpha > 0` adds `α · (−log p_θ(chosen))` using the sigmoid loss as the DPO term.
+> All variants work with CPO: `--cpo-alpha > 0` adds `α · (−log p_θ(chosen))` using the sigmoid loss as the DPO term.
 
 >
 > **`batch_max_len` in DPO/ORPO**: The combined forward concatenates chosen and rejected into a single batch. The dataset `total_length` is `chosen_len + rejected_len`, so `batch_max_len` directly controls the combined token count. For example, `batch_max_len=4096` means up to ~2048 chosen + ~2048 rejected tokens per GPU.
@@ -579,19 +579,19 @@ ORPO combines SFT and preference alignment in a single objective — no referenc
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_orpo.train \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_orpo.train \
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
     --epochs 5 \
-    --save_every 1 \
-    --orpo_beta 0.1 \
+    --save-every 1 \
+    --orpo-beta 0.1 \
     --deepspeed \
-    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
 
 Pre-tokenize data with (no reference log-probs needed):
 
@@ -603,7 +603,7 @@ python -m ochat.data.generate_dataset --train-type orpo \
     --out-prefix PRETOKENIZED_ORPO_DATA_OUTPUT_PATH
 ```
 
-> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--orpo_beta` (λ in the paper, default 0.1) controls the odds-ratio penalty weight. Supports all standard checkpointing, eval, and MLflow flags.
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--orpo-beta` (λ in the paper, default 0.1) controls the odds-ratio penalty weight. Supports all standard checkpointing, eval, and MLflow flags.
 
 #### KTO Training (Kahneman-Tversky Optimization)
 
@@ -612,21 +612,21 @@ KTO uses unpaired preference data — each example is independently labeled desi
 ```bash
 NUM_GPUS=8
 
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
-    --model_path BASE_REPO \
-    --data_prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
-    --save_path PATH_TO_SAVE_MODEL \
-    --batch_max_len BATCH_SIZE \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_kto.train \
+    --model-path BASE_REPO \
+    --data-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
+    --save-path PATH_TO_SAVE_MODEL \
+    --batch-max-len BATCH_SIZE \
     --epochs 5 \
-    --save_every 1 \
-    --kto_beta 0.1 \
+    --save-every 1 \
+    --kto-beta 0.1 \
     --deepspeed \
-    --deepspeed_config ochat/deepspeed_config/deepspeed_config.json
+    --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 ```
 
-For LoRA/QLoRA, add `--use_lora` (or `--use_qlora`) with the standard LoRA flags. Ring attention works via `--use_ring`.
+For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
 
-> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto_beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start (requires LoRA).
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto-beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start (requires LoRA).
 
 Pre-tokenize with:
 
@@ -638,15 +638,15 @@ python -m ochat.data.generate_dataset --train-type kto --ref-logps \
 
 #### Ring Attention for Long Context
 
-Ring attention distributes sequence computation across GPUs, enabling context lengths up to 2¹⁹ tokens. Add `--use_ring` to any training command:
+Ring attention distributes sequence computation across GPUs, enabling context lengths up to 2¹⁹ tokens. Add `--use-ring` to any training command:
 
 ```bash
-deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
-    --use_ring \
+deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+    --use-ring \
     ... other flags ...
 ```
 
-Ring-attention model types (e.g. `llamaRing`, `qwen3_5_chatml` + `--use_ring`) automatically use the ring-attention dataloader and forward pass. This works with SFT, DPO, ORPO, and KTO training.
+Ring-attention model types (e.g. `llamaRing`, `qwen3_5_chatml` + `--use-ring`) automatically use the ring-attention dataloader and forward pass. This works with SFT, DPO, ORPO, and KTO training.
 
 #### Training Flags Reference
 
@@ -655,65 +655,65 @@ Common flags across all training modes:
 | Flag | Default | Description |
 |---|---|---|
 | **Model & Data** |||
-| `--model_path` | *required* | Base model HuggingFace repo or local path |
-| `--model_type` | auto | Model type from registry (auto-detected from pretokenized data) |
-| `--data_prefix` | *required* | Path prefix to pretokenized `.parquet` files |
-| `--save_path` | *required* | Directory for checkpoints and final model |
+| `--model-path` | *required* | Base model HuggingFace repo or local path |
+| `--model-type` | auto | Model type from registry (auto-detected from pretokenized data) |
+| `--data-prefix` | *required* | Path prefix to pretokenized `.parquet` files |
+| `--save-path` | *required* | Directory for checkpoints and final model |
 | **Training** |||
-| `--batch_max_len` | 81920 | Total tokens per batch (must be multiple of 2048) |
+| `--batch-max-len` | 81920 | Total tokens per batch (must be multiple of 2048) |
 | `--epochs` | 5 | Number of training epochs |
-| `--max_steps` | 0 | Override epochs with exact step count (0 = disabled) |
-| `--base_lr` | 3e-4 / 1e-2 | Base LR (3e-4 full FT, 1e-2 LoRA). Auto-scaled unless `--lr` is set |
+| `--max-steps` | 0 | Override epochs with exact step count (0 = disabled) |
+| `--base-lr` | 3e-4 / 1e-2 | Base LR (3e-4 full FT, 1e-2 LoRA). Auto-scaled unless `--lr` is set |
 | `--lr` | auto | Explicit learning rate (disables auto-estimation) |
-| `--lr_warmup_ratio` | 0.05 | Fraction of steps for LR warmup |
-| `--lr_min_ratio` | 0.1 | Minimum LR as fraction of peak (cosine decay endpoint) |
+| `--lr-warmup-ratio` | 0.05 | Fraction of steps for LR warmup |
+| `--lr-min-ratio` | 0.1 | Minimum LR as fraction of peak (cosine decay endpoint) |
 | **Checkpointing** |||
-| `--save_strategy` | epoch | `epoch` or `step` |
-| `--save_every` | *required* | Save interval in epochs or steps |
-| `--checkpoint_every` | 0 | Additional checkpoint interval in steps (0 = off) |
-| `--max_checkpoint` | 1 | Keep at most N recent checkpoints |
+| `--save-strategy` | epoch | `epoch` or `step` |
+| `--save-every` | *required* | Save interval in epochs or steps |
+| `--checkpoint-every` | 0 | Additional checkpoint interval in steps (0 = off) |
+| `--max-checkpoint` | 1 | Keep at most N recent checkpoints |
 | **Evaluation** |||
-| `--eval_strategy` | epoch | `epoch` or `step` |
-| `--eval_every` | *required* | Eval interval in epochs or steps |
+| `--eval-strategy` | epoch | `epoch` or `step` |
+| `--eval-every` | *required* | Eval interval in epochs or steps |
 | **LoRA / QLoRA** |||
-| `--use_lora` | false | Enable LoRA fine-tuning (required for DPO/KTO if ref log-probs not precomputed) |
-| `--use_qlora` | false | Enable QLoRA (4-bit or 8-bit quantization) |
-| `--lora_r` | 32 | LoRA rank |
-| `--lora_alpha` | 32 | LoRA scaling factor |
-| `--lora_target_modules` | `q_proj k_proj v_proj o_proj` | Modules to apply LoRA to |
-| `--quant_bits` | 4 | QLoRA quantization bits (4 or 8) |
+| `--use-lora` | false | Enable LoRA fine-tuning (required for DPO/KTO if ref log-probs not precomputed) |
+| `--use-qlora` | false | Enable QLoRA (4-bit or 8-bit quantization) |
+| `--lora-r` | 32 | LoRA rank |
+| `--lora-alpha` | 32 | LoRA scaling factor |
+| `--lora-target-modules` | `q_proj k_proj v_proj o_proj` | Modules to apply LoRA to |
+| `--quant-bits` | 4 | QLoRA quantization bits (4 or 8) |
 | **Performance** |||
-| `--use_ring` | false | Enable ring attention for long-context training |
-| `--use_fast_norm` | false | Use custom CUDA RMS norm kernel |
-| `--use_fast_rope` | false | Use custom CUDA RoPE kernel |
+| `--use-ring` | false | Enable ring attention for long-context training |
+| `--use-fast-norm` | false | Use custom CUDA RMS norm kernel |
+| `--use-fast-rope` | false | Use custom CUDA RoPE kernel |
 | `--deepspeed` | true | Enable DeepSpeed (required) |
-| `--deepspeed_config` | *required* | Path to DeepSpeed JSON config |
+| `--deepspeed-config` | *required* | Path to DeepSpeed JSON config |
 | **MLflow** |||
-| `--experiment_name` | *required* | MLflow experiment name |
-| `--run_name` | *required* | MLflow run name |
-| `--tracking_uri` | none | MLflow tracking server URI |
+| `--experiment-name` | *required* | MLflow experiment name |
+| `--run-name` | *required* | MLflow run name |
+| `--tracking-uri` | none | MLflow tracking server URI |
 
 DPO-specific:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--dpo_beta` | 0.1 | DPO temperature; higher = closer to reference |
-| `--loss_type` | sigmoid | Loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, sft, sigmoid_norm |
-| `--label_smoothing` | 0.0 | Label smoothing ε for exo_pair, robust, aot, aot_unpaired |
-| `--discopop_tau` | 0.05 | Temperature τ for discopop loss |
-| `--cpo_alpha` | 0.0 | CPO SFT weight (0 = pure DPO, >0 enables CPO) |
+| `--dpo-beta` | 0.1 | DPO temperature; higher = closer to reference |
+| `--loss-type` | sigmoid | Loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, sft, sigmoid_norm |
+| `--label-smoothing` | 0.0 | Label smoothing ε for exo_pair, robust, aot, aot_unpaired |
+| `--discopop-tau` | 0.05 | Temperature τ for discopop loss |
+| `--cpo-alpha` | 0.0 | CPO SFT weight (0 = pure DPO, >0 enables CPO) |
 
 ORPO-specific:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--orpo_beta` | 0.1 | ORPO odds-ratio penalty weight (λ in the paper) |
+| `--orpo-beta` | 0.1 | ORPO odds-ratio penalty weight (λ in the paper) |
 
 KTO-specific:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--kto_beta` | 0.1 | KTO temperature; higher = closer to reference |
+| `--kto-beta` | 0.1 | KTO temperature; higher = closer to reference |
 
 > For DeepSpeed ZERO offloading, use `ochat.training_sft.train_offload` as the module and set `"offload_optimizer": true` in the DeepSpeed config.
 

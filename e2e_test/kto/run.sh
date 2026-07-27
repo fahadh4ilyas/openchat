@@ -100,15 +100,15 @@ echo ""
 echo "=== Step 4/7: Single-GPU KTO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/kto_full_ft
 $PYTHON -m ochat.training_kto.train_single \
-    --local_rank 0 \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/kto_data \
-    --save_path output/kto_full_ft \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --kto_beta "$KTO_BETA" \
-    --experiment_name e2e_kto --run_name kto_full_ft \
-    --tracking_uri "$MLFLOW_URI"
+    --local-rank 0 \
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/kto_data \
+    --save-path output/kto_full_ft \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --kto-beta "$KTO_BETA" \
+    --experiment-name e2e_kto --run-name kto_full_ft \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/kto_full_ft/"
 
 # ---- Step 5: Single-GPU LoRA ----
@@ -116,16 +116,16 @@ echo ""
 echo "=== Step 5/7: Single-GPU KTO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/kto_lora
 $PYTHON -m ochat.training_kto.train_single \
-    --local_rank 0 \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/kto_data \
-    --save_path output/kto_lora \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --kto_beta "$KTO_BETA" \
-    --experiment_name e2e_kto --run_name kto_lora \
-    --tracking_uri "$MLFLOW_URI"
+    --local-rank 0 \
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/kto_data \
+    --save-path output/kto_lora \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --kto-beta "$KTO_BETA" \
+    --experiment-name e2e_kto --run-name kto_lora \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/kto_lora/"
 
 # ---- Step 6: DeepSpeed full FT ----
@@ -133,35 +133,35 @@ echo ""
 echo "=== Step 6/7: DeepSpeed KTO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/kto_deepspeed_ft
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_kto.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/kto_data" \
-    --save_path "$SCRIPT_DIR/output/kto_deepspeed_ft" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --kto_beta "$KTO_BETA" \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
-    --experiment_name e2e_kto --run_name kto_deepspeed_ft \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/kto_data" \
+    --save-path "$SCRIPT_DIR/output/kto_deepspeed_ft" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --kto-beta "$KTO_BETA" \
+    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --experiment-name e2e_kto --run-name kto_deepspeed_ft \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/kto_deepspeed_ft/"
 
 # ---- Step 7: DeepSpeed LoRA ----
 echo ""
 echo "=== Step 7/7: DeepSpeed KTO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/kto_deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_kto.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/kto_data" \
-    --save_path "$SCRIPT_DIR/output/kto_deepspeed_lora" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --kto_beta "$KTO_BETA" \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
-    --experiment_name e2e_kto --run_name kto_deepspeed_lora \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/kto_data" \
+    --save-path "$SCRIPT_DIR/output/kto_deepspeed_lora" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --kto-beta "$KTO_BETA" \
+    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --experiment-name e2e_kto --run-name kto_deepspeed_lora \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/kto_deepspeed_lora/"
 
 # ---- Done ----

@@ -91,15 +91,15 @@ echo ""
 echo "=== Step 3/6: Single-GPU ORPO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_full_ft
 $PYTHON -m ochat.training_orpo.train_single \
-    --local_rank 0 \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/orpo_data \
-    --save_path output/orpo_full_ft \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --orpo_beta "$ORPO_BETA" \
-    --experiment_name e2e_orpo --run_name orpo_full_ft \
-    --tracking_uri "$MLFLOW_URI"
+    --local-rank 0 \
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/orpo_data \
+    --save-path output/orpo_full_ft \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --orpo-beta "$ORPO_BETA" \
+    --experiment-name e2e_orpo --run-name orpo_full_ft \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/orpo_full_ft/"
 
 # ---- Step 4: Single-GPU LoRA ----
@@ -107,16 +107,16 @@ echo ""
 echo "=== Step 4/6: Single-GPU ORPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_lora
 $PYTHON -m ochat.training_orpo.train_single \
-    --local_rank 0 \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/orpo_data \
-    --save_path output/orpo_lora \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --orpo_beta "$ORPO_BETA" \
-    --experiment_name e2e_orpo --run_name orpo_lora \
-    --tracking_uri "$MLFLOW_URI"
+    --local-rank 0 \
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/orpo_data \
+    --save-path output/orpo_lora \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --orpo-beta "$ORPO_BETA" \
+    --experiment-name e2e_orpo --run-name orpo_lora \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/orpo_lora/"
 
 # ---- Step 5: DeepSpeed full FT ----
@@ -124,35 +124,35 @@ echo ""
 echo "=== Step 5/6: DeepSpeed ORPO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_deepspeed_ft
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_orpo.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/orpo_data" \
-    --save_path "$SCRIPT_DIR/output/orpo_deepspeed_ft" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --orpo_beta "$ORPO_BETA" \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
-    --experiment_name e2e_orpo --run_name orpo_deepspeed_ft \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/orpo_data" \
+    --save-path "$SCRIPT_DIR/output/orpo_deepspeed_ft" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --orpo-beta "$ORPO_BETA" \
+    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --experiment-name e2e_orpo --run-name orpo_deepspeed_ft \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/orpo_deepspeed_ft/"
 
 # ---- Step 6: DeepSpeed LoRA ----
 echo ""
 echo "=== Step 6/6: DeepSpeed ORPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_orpo.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/orpo_data" \
-    --save_path "$SCRIPT_DIR/output/orpo_deepspeed_lora" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --orpo_beta "$ORPO_BETA" \
-    --deepspeed --deepspeed_config "$DS_CONFIG" \
-    --experiment_name e2e_orpo --run_name orpo_deepspeed_lora \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/orpo_data" \
+    --save-path "$SCRIPT_DIR/output/orpo_deepspeed_lora" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --orpo-beta "$ORPO_BETA" \
+    --deepspeed --deepspeed-config "$DS_CONFIG" \
+    --experiment-name e2e_orpo --run-name orpo_deepspeed_lora \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/orpo_deepspeed_lora/"
 
 # ---- Done ----

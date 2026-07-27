@@ -63,16 +63,16 @@ def parse_args():
     parser = argparse.ArgumentParser()
     add_base_args(parser, base_lr=3e-4)
     add_lora_args(parser)
-    parser.add_argument("--dpo_beta", type=float, default=0.1, help="DPO temperature parameter")
-    parser.add_argument("--loss_type", type=str, default="sigmoid",
+    parser.add_argument("--dpo-beta", type=float, default=0.1, help="DPO temperature parameter")
+    parser.add_argument("--loss-type", type=str, default="sigmoid",
                         help="DPO loss variant: sigmoid, hinge, ipo, exo_pair, nca_pair, robust, "
                              "bco_pair, sppo_hard, aot, aot_unpaired, apo_zero, apo_down, discopop, "
                              "sft, sigmoid_norm")
-    parser.add_argument("--label_smoothing", type=float, default=0.0,
+    parser.add_argument("--label-smoothing", type=float, default=0.0,
                         help="Label smoothing ε (for exo_pair, robust, aot, aot_unpaired)")
-    parser.add_argument("--discopop_tau", type=float, default=0.05,
+    parser.add_argument("--discopop-tau", type=float, default=0.05,
                         help="DiscoPOP temperature τ")
-    parser.add_argument("--cpo_alpha", type=float, default=0.0,
+    parser.add_argument("--cpo-alpha", type=float, default=0.0,
                         help="CPO SFT weight (0 = pure DPO, >0 = CPO. Default: 0)")
     return parser.parse_args()
 
@@ -222,7 +222,7 @@ def train(args):
             "DPO requires reference log-probs. They were not precomputed during preprocessing "
             "(use --ref-logps with generate_dpo_dataset.py). "
             "Without precomputed ref log-probs, training must compute them from the frozen base model, "
-            "which requires LoRA/QLoRA (--use_lora or --use_qlora)."
+            "which requires LoRA/QLoRA (--use-lora or --use-qlora)."
         )
 
     train_loader = create_distributed_dataloader(args, train_dataset)

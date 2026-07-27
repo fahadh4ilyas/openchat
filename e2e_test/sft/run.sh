@@ -82,13 +82,13 @@ echo ""
 echo "=== Step 3/6: Single-GPU full fine-tuning (${MAX_STEPS} steps) ==="
 rm -rf output/single_full_ft
 $PYTHON -m ochat.training_sft.train_single \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/data \
-    --save_path output/single_full_ft \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --experiment_name e2e_sft --run_name single_full_ft \
-    --tracking_uri "$MLFLOW_URI"
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/data \
+    --save-path output/single_full_ft \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --experiment-name e2e_sft --run-name single_full_ft \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/single_full_ft/"
 
 # ---- Step 4: Single-GPU LoRA ----
@@ -96,47 +96,47 @@ echo ""
 echo "=== Step 4/6: Single-GPU LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/single_lora
 $PYTHON -m ochat.training_sft.train_single \
-    --model_path "$MODEL_PATH" \
-    --data_prefix pretokenized/data \
-    --save_path output/single_lora \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --experiment_name e2e_sft --run_name single_lora \
-    --tracking_uri "$MLFLOW_URI"
+    --model-path "$MODEL_PATH" \
+    --data-prefix pretokenized/data \
+    --save-path output/single_lora \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --experiment-name e2e_sft --run-name single_lora \
+    --tracking-uri "$MLFLOW_URI"
 echo "  → output/single_lora/"
 
 # ---- Step 5: DeepSpeed full FT (1 GPU) ----
 echo ""
 echo "=== Step 5/6: DeepSpeed full fine-tuning (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_full_ft
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_sft.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/data" \
-    --save_path "$SCRIPT_DIR/output/deepspeed_full_ft" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
-    --experiment_name e2e_sft --run_name deepspeed_full_ft \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/data" \
+    --save-path "$SCRIPT_DIR/output/deepspeed_full_ft" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
+    --experiment-name e2e_sft --run-name deepspeed_full_ft \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/deepspeed_full_ft/"
 
 # ---- Step 6: DeepSpeed LoRA (1 GPU) ----
 echo ""
 echo "=== Step 6/6: DeepSpeed LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
     --module ochat.training_sft.train \
-    --model_path "$MODEL_PATH" \
-    --data_prefix "$SCRIPT_DIR/pretokenized/data" \
-    --save_path "$SCRIPT_DIR/output/deepspeed_lora" \
-    --batch_max_len "$BATCH_MAX_LEN" \
-    --epochs 1 --max_steps "$MAX_STEPS" \
-    --use_lora \
-    --deepspeed --deepspeed_config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
-    --experiment_name e2e_sft --run_name deepspeed_lora \
-    --tracking_uri "$MLFLOW_URI")
+    --model-path "$MODEL_PATH" \
+    --data-prefix "$SCRIPT_DIR/pretokenized/data" \
+    --save-path "$SCRIPT_DIR/output/deepspeed_lora" \
+    --batch-max-len "$BATCH_MAX_LEN" \
+    --epochs 1 --max-steps "$MAX_STEPS" \
+    --use-lora \
+    --deepspeed --deepspeed-config "$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json" \
+    --experiment-name e2e_sft --run-name deepspeed_lora \
+    --tracking-uri "$MLFLOW_URI")
 echo "  → output/deepspeed_lora/"
 
 # ---- Done ----

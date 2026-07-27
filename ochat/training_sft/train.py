@@ -1,7 +1,7 @@
 """Distributed SFT/C-RLFT training entry point (DeepSpeed).
 
 Handles full fine-tuning, LoRA, and QLoRA in one script.
-Routes to train_ring (also unified) when --use_ring is set.
+Routes to train_ring (also unified) when --use-ring is set.
 
 base_lr=3e-4 (full FT), 1e-2 (LoRA).
 """
@@ -51,7 +51,7 @@ except ImportError:
 
 
 class TrainingArguments(BaseTrainingArguments, LoraTrainingArgsMixin):
-    """SFT training arguments. LoRA fields are ignored when --use_lora is not set."""
+    """SFT training arguments. LoRA fields are ignored when --use-lora is not set."""
     pass
 
 

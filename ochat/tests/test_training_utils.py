@@ -148,30 +148,30 @@ class TestTrainingArgs:
         add_lora_args(parser)
 
         parsed = parser.parse_args([
-            "--local_rank", "0",
-            "--model_path", "/m",
-            "--data_prefix", "/d",
-            "--save_path", "/s",
-            "--experiment_name", "test",
-            "--run_name", "r1",
+            "--local-rank", "0",
+            "--model-path", "/m",
+            "--data-prefix", "/d",
+            "--save-path", "/s",
+            "--experiment-name", "test",
+            "--run-name", "r1",
         ])
         assert parsed.base_lr == 1e-2
         assert parsed.lora_r == 32
 
     def test_auto_lora_args(self):
-        """LoRA args should be available even without --use_lora."""
+        """LoRA args should be available even without --use-lora."""
         import argparse
         parser = argparse.ArgumentParser()
         add_base_args(parser)
         add_lora_args(parser)
 
         parsed = parser.parse_args([
-            "--local_rank", "0",
-            "--model_path", "/m", "--data_prefix", "/d", "--save_path", "/s",
-            "--experiment_name", "test", "--run_name", "r1",
-            "--use_qlora",
-            "--quant_bits", "8",
-            "--lora_r", "64",
+            "--local-rank", "0",
+            "--model-path", "/m", "--data-prefix", "/d", "--save-path", "/s",
+            "--experiment-name", "test", "--run-name", "r1",
+            "--use-qlora",
+            "--quant-bits", "8",
+            "--lora-r", "64",
         ])
         assert parsed.use_qlora is True
         assert parsed.quant_bits == 8
