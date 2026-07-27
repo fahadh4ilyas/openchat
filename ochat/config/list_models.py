@@ -10,6 +10,9 @@ import argparse
 
 from ochat.config._model_config_data import MODEL_CONFIG_DATA
 
+LLAMA_FORMAT = ['llama3', 'llama3.1', 'llama3Ring', 'llama3.1Ring']
+GEMMA_FORMAT = ['gemma_instruct', 'gemmaRing_instruct', 'gemma2_instruct']
+
 
 def _tokenizer_type(has_processor: bool) -> str:
     return "processor" if has_processor else "tokenizer"
@@ -42,6 +45,10 @@ def main():
             return
         entry = data_by_name[args.model_type]
         name, max_context, has_processor, model_class, conv_type, _kw = entry[:6]
+        if name in LLAMA_FORMAT:
+            conv_type = "llama"
+        elif name in GEMMA_FORMAT:
+            conv_type = "gemma"
         print(f"model_type:       {name}")
         print(f"model_class:      {model_class}")
         print(f"tokenizer_type:   {_tokenizer_type(has_processor)}")
@@ -52,6 +59,10 @@ def main():
         print("-" * 110)
         for entry in MODEL_CONFIG_DATA:
             name, max_context, has_processor, model_class, conv_type, _kw = entry[:6]
+            if name in LLAMA_FORMAT:
+                conv_type = "llama"
+            elif name in GEMMA_FORMAT:
+                conv_type = "gemma"
             _print_row(name, max_context, has_processor, model_class, conv_type)
 
 
