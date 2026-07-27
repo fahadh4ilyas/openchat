@@ -233,7 +233,7 @@ def _delegate_to_train_type(train_type: str):
     # Remove --train-type and its value from sys.argv
     cleaned_argv = []
     skip_next = False
-    for i, arg in enumerate(sys.argv):
+    for arg in sys.argv:
         if skip_next:
             skip_next = False
             continue
@@ -244,6 +244,11 @@ def _delegate_to_train_type(train_type: str):
             continue
         cleaned_argv.append(arg)
     sys.argv = cleaned_argv
+
+    # Register __main__ as the canonical module to avoid double-import
+    # when the sub-module does `from ochat.data.convert_dataset import ...`
+    if sys.modules["__main__"].__spec__ is not None:
+        sys.modules["ochat.data.convert_dataset"] = sys.modules["__main__"]
 
     module_name = f"ochat.data.convert_dataset_{train_type}"
     try:

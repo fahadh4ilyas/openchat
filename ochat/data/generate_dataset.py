@@ -343,6 +343,11 @@ def _delegate_to_train_type(train_type: str):
         cleaned_argv.append(arg)
     sys.argv = cleaned_argv
 
+    # Register __main__ as the canonical module to avoid double-import
+    # when the sub-module does `from ochat.data.generate_dataset import ...`
+    if sys.modules["__main__"].__spec__ is not None:
+        sys.modules["ochat.data.generate_dataset"] = sys.modules["__main__"]
+
     module_name = f"ochat.data.generate_{train_type}_dataset"
     try:
         module = importlib.import_module(module_name)
