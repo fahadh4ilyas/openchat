@@ -333,8 +333,7 @@ python -m ochat.data.generate_dataset --train-type kto \
     --model-type MODEL_TYPE \
     --model-path BASE_REPO \
     --in-files data_kto.jsonl \
-    --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
-    --ref-logps
+    --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
 ```
 
 > The old direct module paths (`generate_dataset_dpo`, `generate_dataset_orpo`, `generate_dataset_kto`) still work and are equivalent to using `--train-type`.
@@ -356,20 +355,17 @@ DPO-specific:
 
 | Flag | Description |
 |---|---|
-| `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
 
 KTO-specific:
 
 | Flag | Description |
 |---|---|
 | `--kto` | Enable KTO mode (adds `label` + `ref_logp` columns) |
-| `--ref-logps` | Compute reference log-probs during preprocessing (requires GPU) |
 
 Output files are written as `.parquet` (or `.pickle`) to `PRETOKENIZED_DATA_OUTPUT_PATH.train.parquet` and optionally `.eval.parquet`.
 
-> If you pre-tokenized without `--ref-logps`, you can still precompute reference
-> log-probs later using the standalone cache script (useful when you want to use
-> full fine-tuning instead of LoRA):
+> Reference log-probs are always computed separately via `cache_ref_logps.py`,
+> never during pre-tokenization. This keeps preprocessing CPU/GPU-clean.
 >
 > ```bash
 > python -m ochat.data.cache_ref_logps --data-prefix PRETOKENIZED_DATA_PATH --model-path BASE_REPO
@@ -489,7 +485,7 @@ python -m ochat.training_kto.train_single \
 
 #### DPO Training
 
-DPO training supports full fine-tuning when ref log-probs are precomputed (`--ref-logps` during preprocessing); LoRA/QLoRA required when they need to be computed at training start (the frozen base model serves as reference).
+DPO training supports full fine-tuning when ref log-probs are precomputed (via `cache_ref_logps.py`); LoRA/QLoRA required when they need to be computed at training start (the frozen base model serves as reference).
 
 ```bash
 NUM_GPUS=8
@@ -637,12 +633,12 @@ deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
 
 For LoRA/QLoRA, add `--use-lora` (or `--use-qlora`) with the standard LoRA flags. Ring attention works via `--use-ring`.
 
-> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto-beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are either precomputed at preprocessing (`--ref-logps`) or cached at training start (requires LoRA).
+> `base_lr` defaults to 3e-4 (full FT) or 1e-2 (LoRA). `--kto-beta` controls deviation from reference (default 0.1). KL divergence is estimated per-batch as `mean(log_p - log_p_ref)`. Reference log-probs are precomputed via `cache_ref_logps.py` or cached at training start (requires LoRA).
 
 Pre-tokenize with:
 
 ```bash
-python -m ochat.data.generate_dataset --train-type kto --ref-logps \
+python -m ochat.data.generate_dataset --train-type kto \
     --model-type MODEL_TYPE --model-path BASE_REPO \
     --in-files data_kto.jsonl --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
 ```
