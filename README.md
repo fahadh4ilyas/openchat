@@ -351,11 +351,6 @@ Key flags for all commands:
 | `--max-workers N` | Number of parallel worker processes |
 | `--max-jobs N` | Number of parallel batches per worker |
 
-DPO-specific:
-
-| Flag | Description |
-|---|---|
-
 KTO-specific:
 
 | Flag | Description |
