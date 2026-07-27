@@ -208,12 +208,11 @@ def train(args):
 
     model, optimizer = create_model(args)
 
-    if not ref_logps_precomputed:
-        ref_cache = ensure_kto_ref_logps_cached(model, train_dataset, args, "train")
-        train_dataset.dataset["ref_logp"] = ref_cache
-        if eval_dataset is not None:
-            eval_cache = ensure_kto_ref_logps_cached(model, eval_dataset, args, "eval")
-            eval_dataset.dataset["ref_logp"] = eval_cache
+    ref_cache = ensure_kto_ref_logps_cached(model, train_dataset, args, "train")
+    train_dataset.dataset["ref_logp"] = ref_cache
+    if eval_dataset is not None:
+        eval_cache = ensure_kto_ref_logps_cached(model, eval_dataset, args, "eval")
+        eval_dataset.dataset["ref_logp"] = eval_cache
 
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 

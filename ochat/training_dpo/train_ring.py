@@ -37,6 +37,7 @@ from ochat.training_utils._common import (
 )
 from ochat.training_utils.base_train import (
     create_model_and_engine,
+    ensure_dpo_ref_logps_cached,
     save_checkpoint,
     setup_mlflow,
     _parse_ds_config,
@@ -205,20 +206,18 @@ def train(args):
 
     model_engine, optimizer = create_model_and_engine(args, args.base_lr)
 
-    # Precompute reference log-probs if not already in dataset
-    if not ref_logps_precomputed:
-        from ochat.training_utils.base_train import ensure_dpo_ref_logps_cached
-        chosen_cache, rejected_cache = ensure_dpo_ref_logps_cached(
-            model_engine, train_dataset, args, "train"
+    # Load or compute reference log-probs (cache-loaded if precomputed, computed online if not)
+    chosen_cache, rejected_cache = ensure_dpo_ref_logps_cached(
+        model_engine, train_dataset, args, "train"
+    )
+    train_dataset.dataset["chosen_ref_logp"] = chosen_cache
+    train_dataset.dataset["rejected_ref_logp"] = rejected_cache
+    if eval_dataset is not None:
+        chosen_ecache, rejected_ecache = ensure_dpo_ref_logps_cached(
+            model_engine, eval_dataset, args, "eval"
         )
-        train_dataset.dataset["chosen_ref_logp"] = chosen_cache
-        train_dataset.dataset["rejected_ref_logp"] = rejected_cache
-        if eval_dataset is not None:
-            chosen_ecache, rejected_ecache = ensure_dpo_ref_logps_cached(
-                model_engine, eval_dataset, args, "eval"
-            )
-            eval_dataset.dataset["chosen_ref_logp"] = chosen_ecache
-            eval_dataset.dataset["rejected_ref_logp"] = rejected_ecache
+        eval_dataset.dataset["chosen_ref_logp"] = chosen_ecache
+        eval_dataset.dataset["rejected_ref_logp"] = rejected_ecache
 
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 
