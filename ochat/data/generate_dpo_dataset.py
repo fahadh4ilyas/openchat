@@ -130,7 +130,8 @@ def _build_single_conv(tokens: list, weights: list, images: list, videos: list, 
 
 def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     """Tokenize a batch of DPO pairs (CPU-only, runs in parallel)."""
-    from ochat.config import MODEL_CONFIG_MAP, Conversation
+    from ochat.config import MODEL_CONFIG_MAP
+    from ochat.config.conversation_template import Conversation
 
     model_config = MODEL_CONFIG_MAP[args.model_type]
     tokenizer = model_config.model_tokenizer_create(args.model_path)

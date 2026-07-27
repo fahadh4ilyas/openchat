@@ -137,7 +137,8 @@ def add_single_conv(outputs: list, tokens: list, weights: list, images: list, vi
 
 
 def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
-    from ochat.config import MODEL_CONFIG_MAP, Conversation, PretokenizedConversation, PretrainingText
+    from ochat.config import MODEL_CONFIG_MAP
+    from ochat.config.conversation_template import Conversation, PretokenizedConversation, PretrainingText
 
     # Tokenization
     model_config = MODEL_CONFIG_MAP[args.model_type]
@@ -306,7 +307,6 @@ def _compute_kto_ref_logprobs(rows: list, args: DataArguments):
 
 
 def generate_split(conversations: list, split_name: str, args: DataArguments):
-    from ochat.config import MODEL_CONFIG_MAP
     # schema
     metadata = {"model_type": args.model_type}
     if args.kto:
