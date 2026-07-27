@@ -99,7 +99,7 @@ class Fast_RoPE_Embedding(torch.autograd.Function):
     def forward(ctx, Q, cos, sin):
         cos, sin = cos.squeeze(), sin.squeeze()
         seq_len, n_heads, head_dim = Q.shape
-        Q = Q.view(seq_len, n_heads * head_dim)
+        Q = Q.reshape(seq_len, n_heads * head_dim)
         n_rows, n_cols = Q.shape
         assert seq_len <= cos.shape[0]
 
@@ -135,7 +135,7 @@ class Fast_RoPE_Embedding(torch.autograd.Function):
         ctx.n_groups = n_groups
         ctx.cos = cos
         ctx.sin = sin
-        return Q.view(seq_len, n_heads, head_dim)
+        return Q.reshape(seq_len, n_heads, head_dim)
     pass
 
     @staticmethod
