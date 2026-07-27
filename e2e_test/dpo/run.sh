@@ -135,7 +135,7 @@ echo ""
 echo "=== Step 6/7: DeepSpeed DPO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_deepspeed_ft
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_dpo.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/dpo_data" \
@@ -153,7 +153,7 @@ echo "  → output/dpo_deepspeed_ft/"
 echo ""
 echo "=== Step 7/7: DeepSpeed DPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/dpo_deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_dpo.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/dpo_data" \

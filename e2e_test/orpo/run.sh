@@ -126,7 +126,7 @@ echo ""
 echo "=== Step 5/6: DeepSpeed ORPO full FT (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_deepspeed_ft
 DS_CONFIG="$REPO_ROOT/ochat/deepspeed_config/deepspeed_config.json"
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_orpo.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/orpo_data" \
@@ -144,7 +144,7 @@ echo "  → output/orpo_deepspeed_ft/"
 echo ""
 echo "=== Step 6/6: DeepSpeed ORPO LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/orpo_deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_orpo.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/orpo_data" \

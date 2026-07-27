@@ -393,7 +393,7 @@ Other hyperparameters have been carefully selected as the default. Furthermore, 
 NUM_GPUS=8
 
 # Full fine-tuning
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model-path BASE_REPO \
           --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
           --save-path PATH_TO_SAVE_MODEL \
@@ -404,7 +404,7 @@ deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
           --deepspeed-config ochat/deepspeed_config/deepspeed_config.json
 
 # LoRA fine-tuning (same script, add --use-lora)
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
           --model-path BASE_REPO \
           --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
           --save-path PATH_TO_SAVE_MODEL \
@@ -487,7 +487,7 @@ DPO training supports full fine-tuning when ref log-probs are precomputed (`--re
 ```bash
 NUM_GPUS=8
 
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_dpo.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --model-path BASE_REPO \
     --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
     --save-path PATH_TO_SAVE_MODEL \
@@ -510,7 +510,7 @@ CPO adds an SFT term to the DPO loss: `L_CPO = L_DPO + α · L_SFT`. This encour
 ```bash
 NUM_GPUS=8
 
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_dpo.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_dpo.train \
     --model-path BASE_REPO \
     --data-prefix PRETOKENIZED_DPO_DATA_OUTPUT_PATH \
     --save-path PATH_TO_SAVE_MODEL \
@@ -579,7 +579,7 @@ ORPO combines SFT and preference alignment in a single objective — no referenc
 ```bash
 NUM_GPUS=8
 
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_orpo.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_orpo.train \
     --model-path BASE_REPO \
     --data-prefix PRETOKENIZED_DATA_OUTPUT_PATH \
     --save-path PATH_TO_SAVE_MODEL \
@@ -612,7 +612,7 @@ KTO uses unpaired preference data — each example is independently labeled desi
 ```bash
 NUM_GPUS=8
 
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_kto.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_kto.train \
     --model-path BASE_REPO \
     --data-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH \
     --save-path PATH_TO_SAVE_MODEL \
@@ -641,7 +641,7 @@ python -m ochat.data.generate_dataset --train-type kto --ref-logps \
 Ring attention distributes sequence computation across GPUs, enabling context lengths up to 2¹⁹ tokens. Add `--use-ring` to any training command:
 
 ```bash
-deepspeed --num-gpus=$NUM_GPUS --module ochat.training_sft.train \
+deepspeed --num_gpus=$NUM_GPUS --module ochat.training_sft.train \
     --use-ring \
     ... other flags ...
 ```

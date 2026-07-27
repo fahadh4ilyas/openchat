@@ -112,7 +112,7 @@ echo "  → output/single_lora/"
 echo ""
 echo "=== Step 5/6: DeepSpeed full fine-tuning (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_full_ft
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_sft.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/data" \
@@ -129,7 +129,7 @@ echo "  → output/deepspeed_full_ft/"
 echo ""
 echo "=== Step 6/6: DeepSpeed LoRA (${MAX_STEPS} steps) ==="
 rm -rf output/deepspeed_lora
-(cd "$REPO_ROOT" && $DEEPSPEED --num-gpus 1 \
+(cd "$REPO_ROOT" && $DEEPSPEED --num_gpus 1 \
     --module ochat.training_sft.train \
     --model-path "$MODEL_PATH" \
     --data-prefix "$SCRIPT_DIR/pretokenized/data" \
