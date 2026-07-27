@@ -61,9 +61,6 @@ def check_ref_logps_precomputed(
             (DPO: ['chosen_nz_input_ids', 'rejected_nz_input_ids'],
              KTO: ['nz_input_ids']). Required if cache_paths is given.
     """
-    precomputed = dataset.metadata.get("ref_logps_computed")
-    if precomputed:
-        return True
 
     if cache_paths and checksum_keys:
         expected = _compute_dataset_checksum(dataset, checksum_keys)

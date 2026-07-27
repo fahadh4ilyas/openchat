@@ -9,16 +9,16 @@ Usage: python -m ochat.data.generate_kto_dataset \
     --model-type MODEL_TYPE --model-path BASE_REPO \
     --in-files data_kto.jsonl --out-prefix PRETOKENIZED_KTO_DATA_OUTPUT_PATH
 
-To precompute reference log-probs during preprocessing:
-    python -m ochat.data.generate_kto_dataset ... --ref-logps
+Reference log-probs are computed separately via cache_ref_logps.py,
+not during preprocessing.
 
 Input JSONL format (each line is a Conversation with a `label` field):
     {"items": [...], "label": true}
     {"items": [...], "label": false}
 
 Output: Parquet files with standard SFT tokenization fields plus
-`label` (bool) and `ref_logp` (float32, NaN sentinel if --ref-logps
-was not used).
+`label` (bool) and `ref_logp` (float32, NaN sentinel — filled later
+by cache_ref_logps.py).
 """
 
 from ochat.data.generate_dataset import DataArguments, generate_dataset
@@ -47,8 +47,6 @@ def main():
     parser.add_argument("--max-jobs", "--max_jobs", type=int, default=10)
     parser.add_argument("--num-splits", "--num_splits", type=int, default=10)
     parser.add_argument("--split-files", "--split_files", action="store_true")
-    parser.add_argument("--ref-logps", "--ref_logps", action="store_true",
-                        help="Compute reference log-probs during preprocessing (requires GPU)")
 
     args = parser.parse_args()
     args = DataArguments(**vars(args), kto=True)

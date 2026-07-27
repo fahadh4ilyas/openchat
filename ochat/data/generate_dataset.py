@@ -43,7 +43,6 @@ class DataArguments(BaseModel):
     split_files: bool = Field(False)
     num_splits: int = Field(10)
     kto: bool = Field(False)
-    ref_logps: bool = Field(False)
 
     @validator("max_jobs")
     def check_max_jobs(cls, v, info: ValidationInfo):
@@ -230,7 +229,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         kwargs = {}
         if args.kto:
             kwargs["label"] = curr_batch[i].label
-            kwargs["ref_logp"] = float("nan")  # Sentinel NaN: filled by compute_ref_logprobs if --ref-logps
+            kwargs["ref_logp"] = float("nan")  # Sentinel NaN: filled by cache_ref_logps.py
 
         # Add to results
         add_single_conv(outputs, tokens, weights, images, videos, args, **kwargs)
@@ -240,77 +239,9 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     return outputs
 
 
-def _batch_to_tensor(row: dict) -> dict:
-    """Convert a single row dict to model-compatible tensors."""
-    import torch
-    keys = {
-        "seqlens": torch.long,
-        "nz_input_ids": torch.long,
-        "nz_position_ids": torch.long,
-        "nz_shifted_label_ids": torch.long,
-        "nz_shifted_loss_weights": torch.bfloat16,
-    }
-    batch = {}
-    for k, dtype in keys.items():
-        arr = np.array(row[k], dtype=np.int32 if dtype == torch.long else np.float32)
-        batch[k] = torch.from_numpy(arr).to(dtype)
-
-    batch["cu_seqlens"] = torch.nn.functional.pad(
-        batch["seqlens"].cumsum(-1, dtype=torch.int32), (1, 0)
-    )
-    batch["max_seqlen"] = batch["seqlens"].max().item()
-    del batch["seqlens"]
-    return batch
-
-
-def _compute_kto_ref_logprobs(rows: list, args: DataArguments):
-    """Compute reference log-probs for KTO data by running each example through the base model.
-
-    Each row gets a scalar ref_logp = log p_ref(response | prompt).
-    Uses the SFT-style forward (num_seq=1, loss is CE with loss_weights).
-    ref_logp = -loss (since loss = -sum(w_i * log p_i) with w_i=1 for response tokens).
-    """
-    import torch
-    from ochat.config import MODEL_CONFIG_MAP
-
-    print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Loading model for KTO reference log-probs ...")
-
-    model_config = MODEL_CONFIG_MAP[args.model_type]
-    model = model_config.model_create_for_training(args.model_path, dtype=torch.bfloat16)
-    model = model.to("cuda")
-    model.eval()
-
-    print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Computing reference log-probs for {len(rows)} examples ...")
-
-    with torch.inference_mode():
-        for idx, row in enumerate(rows):
-            single = {k: np.array(row[k]) for k in [
-                "seqlens", "nz_input_ids", "nz_position_ids",
-                "nz_shifted_label_ids", "nz_shifted_loss_weights",
-            ]}
-            tensor = _batch_to_tensor(single)
-            tensor = {k: v.to("cuda") for k, v in tensor.items()}
-
-            loss = model(**tensor, num_seq=1).loss
-            if isinstance(loss, tuple):
-                loss, _ = loss
-
-            row["ref_logp"] = -loss.item()
-
-            if (idx + 1) % 500 == 0:
-                print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Processed {idx + 1}/{len(rows)} examples")
-                torch.cuda.empty_cache()
-
-    del model
-    torch.cuda.empty_cache()
-    return rows
-
-
 def generate_split(conversations: list, split_name: str, args: DataArguments):
     # schema
     metadata = {"model_type": args.model_type}
-    if args.kto:
-        metadata["ref_logps_computed"] = args.ref_logps
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
         pyarrow.field("num_seqs", pyarrow.float32()),
@@ -362,10 +293,6 @@ def generate_split(conversations: list, split_name: str, args: DataArguments):
                 gc.collect()
         if not args.split_files:
             outputs = [d for output in outputs for d in output]
-
-    # Compute reference log-probs for KTO (if --kto --ref-logps)
-    if args.kto and args.ref_logps:
-        outputs = _compute_kto_ref_logprobs(outputs, args)
 
     # write
     if not args.split_files:
@@ -451,7 +378,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-splits", "--num_splits", type=int, default=10, help="Number of split jobs to create.")
     parser.add_argument("--split-files", "--split_files", action="store_true", help="If true, the input files are split into multiple files for processing based on num_splits. If false, the input files are processed as a single file.")
     parser.add_argument("--kto", action="store_true", help="KTO mode: add label and ref_logp columns for KTO training.")
-    parser.add_argument("--ref-logps", "--ref_logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU, only meaningful with --kto).")
     parser.add_argument("--train-type", "--train_type", type=str, default="sft",
                         help="Training type: sft, dpo, orpo, or kto. "
                              "If not sft, delegates to generate_dataset_<train_type>.py.")

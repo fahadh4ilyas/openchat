@@ -51,7 +51,6 @@ class DataArguments(BaseModel):
     max_jobs: int = Field(10)
     split_files: bool = Field(False)
     num_splits: int = Field(10)
-    ref_logps: bool = Field(False)
 
     @validator("max_jobs")
     def check_max_jobs(cls, v, info: ValidationInfo):
@@ -209,8 +208,7 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
         row["num_seqs"] = float(sum(chosen_data.get("nz_shifted_loss_weights", [0])) +
                                 sum(rejected_data.get("nz_shifted_loss_weights", [0])))
 
-        # Sentinel NaN: filled in phase 2 (compute_ref_logprobs) when --ref-logps is set.
-        # Training scripts auto-detect NaN and switch to online reference computation.
+        # Sentinel NaN: filled later by cache_ref_logps.py
         row["chosen_ref_logp"] = [float("nan")]
         row["rejected_ref_logp"] = [float("nan")]
 
@@ -220,76 +218,11 @@ def convert_conversation_batch(job_id: int, batch: list, args: DataArguments):
     return outputs
 
 
-def _batch_to_tensor(row: dict) -> dict:
-    """Convert a single row to model-compatible tensors."""
-    keys = {
-        "seqlens": torch.long,
-        "nz_input_ids": torch.long,
-        "nz_position_ids": torch.long,
-        "nz_shifted_label_ids": torch.long,
-        "nz_shifted_loss_weights": torch.bfloat16,
-    }
-    batch = {}
-    for k, dtype in keys.items():
-        arr = np.array(row[k], dtype=np.int32 if dtype == torch.long else np.float32)
-        batch[k] = torch.from_numpy(arr).to(dtype)
-
-    batch["cu_seqlens"] = torch.nn.functional.pad(
-        batch["seqlens"].cumsum(-1, dtype=torch.int32), (1, 0)
-    )
-    batch["max_seqlen"] = batch["seqlens"].max().item()
-    del batch["seqlens"]
-    return batch
-
-
-def compute_ref_logprobs(rows: list, args: DataArguments):
-    """Phase 2: load the base model and compute reference log-probs for all pairs."""
-    if not args.ref_logps:
-        return rows
-
-    from ochat.config import MODEL_CONFIG_MAP
-
-    print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Loading model for reference log-probs ...")
-
-    model_config = MODEL_CONFIG_MAP[args.model_type]
-    model = model_config.model_create_for_training(args.model_path, dtype=torch.bfloat16)
-    model = model.to("cuda")
-    model.eval()
-
-    print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Computing reference log-probs for {len(rows)} pairs ...")
-
-    with torch.inference_mode():
-        for idx, row in enumerate(rows):
-            for side in ("chosen", "rejected"):
-                single = {k: np.array(row[f"{side}_{k}"]) for k in [
-                    "seqlens", "nz_input_ids", "nz_position_ids",
-                    "nz_shifted_label_ids", "nz_shifted_loss_weights",
-                ]}
-                tensor = _batch_to_tensor(single)
-                tensor = {k: v.to("cuda") for k, v in tensor.items()}
-
-                loss = model(**tensor, num_seq=1).loss
-                if isinstance(loss, tuple):
-                    loss, _ = loss
-
-                # loss = sum(w_i * -log_p_i) with w_i=1 for response tokens
-                # So ref_logp_sum = -loss
-                row[f"{side}_ref_logp"] = [-loss.item()]
-
-            if (idx + 1) % 500 == 0:
-                print(f"[{datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}] Processed {idx + 1}/{len(rows)} pairs")
-                torch.cuda.empty_cache()
-
-    del model
-    torch.cuda.empty_cache()
-    return rows
-
-
 def generate_split(rows: list, split_name: str, args: DataArguments):
-    """Tokenize + compute ref log-probs + write parquet for one data split."""
+    """Tokenize + write parquet for one data split."""
     from ochat.config import MODEL_CONFIG_MAP
 
-    metadata = {"model_type": args.model_type, "ref_logps_computed": args.ref_logps}
+    metadata = {"model_type": args.model_type}
 
     schema = [
         pyarrow.field("total_length", pyarrow.int32()),
@@ -334,9 +267,6 @@ def generate_split(rows: list, split_name: str, args: DataArguments):
 
     if not args.split_files:
         all_rows = [row for output in all_outputs for row in output]
-
-        # Phase 2: compute reference log-probs (GPU)
-        all_rows = compute_ref_logprobs(all_rows, args)
 
         # Write
         print(f'[{datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}] Write table to disk ...')
@@ -387,7 +317,6 @@ def main():
     parser.add_argument("--max-jobs", "--max_jobs", type=int, default=10)
     parser.add_argument("--num-splits", "--num_splits", type=int, default=10)
     parser.add_argument("--split-files", "--split_files", action="store_true")
-    parser.add_argument("--ref-logps", "--ref_logps", action="store_true", help="Compute reference log-probs during preprocessing (requires GPU)")
     args = parser.parse_args()
 
     args = DataArguments(**vars(args))
