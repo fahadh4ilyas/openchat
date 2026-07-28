@@ -189,7 +189,8 @@ def train(args: TrainingArguments):
 
     # Hyperparams
     args.lr = calculate_auto_lr(
-        args.base_lr, args.lr, args.batch_max_len, args.model_type, train_dataset
+        args.base_lr, args.lr, args.batch_max_len, train_dataset,
+        MODEL_CONFIG_MAP[args.model_type].base_lr_scale,
     )
 
     # Logger

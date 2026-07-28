@@ -1,7 +1,7 @@
 import importlib
 from functools import partial
 
-from ochat.config._model_config_data import MODEL_CONFIG_DATA
+from ochat.config._model_config_data import MODEL_CONFIG_DATA, _BASE_LR_SCALE
 
 
 _V3_2_PREFIXES = {
@@ -86,6 +86,13 @@ def _build_config_for_entry(entry):
     name, max_context, has_processor, model_class_name, conv_type, kwargs = entry[:6]
     model_kwargs = entry[6] if len(entry) > 6 else {}
 
+    # Auto-LR scale: match model name prefix against _BASE_LR_SCALE
+    base_lr_scale = 1.0
+    for prefix, scale in _BASE_LR_SCALE:
+        if prefix in name:
+            base_lr_scale = scale
+            break
+
     # Tokenizer
     use_fast = True if name == "deepseekv2" else False
     if has_processor:
@@ -112,6 +119,7 @@ def _build_config_for_entry(entry):
         model_tokenizer_create=tokenizer_create,
         model_create_for_training=model_create,
         model_has_processor=has_processor,
+        base_lr_scale=base_lr_scale,
         conversation_template=template,
     )
 

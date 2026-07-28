@@ -190,7 +190,8 @@ def train(args):
     if eval_dataset is not None:
         eval_loader = create_distributed_dataloader(args, eval_dataset)
 
-    args.lr = calculate_auto_lr(args.base_lr, args.lr, args.batch_max_len, args.model_type, train_dataset)
+    args.lr = calculate_auto_lr(args.base_lr, args.lr, args.batch_max_len, train_dataset,
+                                MODEL_CONFIG_MAP[args.model_type].base_lr_scale)
 
     if args.tracking_uri:
         mlflow.set_tracking_uri(args.tracking_uri)

@@ -13,6 +13,10 @@ class ModelConfig(BaseModel):
     model_create_for_training: Callable[..., PreTrainedModel]
     model_has_processor: bool = False
 
+    # Auto-LR: scaling factor relative to the llama 7B reference point.
+    # 1.0 = use default base_lr as-is; < 1.0 = reduce LR for larger/more-sensitive models.
+    base_lr_scale: float = 1.0
+
     # conversation template
     conversation_template: Union[
         partial[ConversationTemplate], partial[ChatMLConversationTemplate], partial[DeepseekConversationTemplate]

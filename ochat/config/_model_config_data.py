@@ -152,3 +152,11 @@ MODEL_CONFIG_DATA = [
     ("zephyr", 8192, False, "MistralForCausalLM", "chatml",
      {"model": "mistral", "prompt_format": "<|{role}|>\n{text}</s>", "inference_condition": ""}),
 ]
+
+# Auto-LR scaling factors per model family.
+# Key = prefix matched against model name (case-insensitive substring).
+# First match wins.  1.0 = use default base_lr as-is.
+_BASE_LR_SCALE = [
+    ("mistral", 1 / 6),    # Mistral 7B — empirically needs lower LR than llama 7B
+    ("mixtral", 1 / 6),    # Mixtral 8×7B — same family, MoE architecture
+]

@@ -32,9 +32,6 @@ BATCH_KEYS = {
     "nz_shifted_loss_weights": torch.bfloat16,
 }
 
-MODEL_LR = ["mistral", "mixtral", "qwen2", "qwen3", "qwen3_5", "gemma", "gemma2", "phi", "deepseekv2"]
-
-
 # -- Reference log-prob checking ---------------------------------------------
 
 
@@ -324,13 +321,12 @@ def save_openchat_metadata(args, epoch, latest_step: int, save_path):
 # -- Auto LR estimation -------------------------------------------------------
 
 def calculate_auto_lr(base_lr: float, lr: Optional[float], batch_max_len: int,
-                      model_type: str, train_dataset: NumpyDataset):
+                      train_dataset: NumpyDataset, base_lr_scale: float = 1.0):
     if lr is not None:
         return lr
 
+    base_lr *= base_lr_scale
     base_bs = 4_000_000
-    if any(x in model_type.lower() for x in MODEL_LR):
-        base_lr /= 6.0
 
     # Auto-detect SFT vs DPO/ORPO dataset format
     if "chosen_nz_shifted_loss_weights" in train_dataset.dataset:
