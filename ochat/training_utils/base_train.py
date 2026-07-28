@@ -17,7 +17,7 @@ import mlflow
 # -- Model creation (shared by all distributed training scripts) ---------------
 
 
-def create_model_and_engine(args, base_lr: float) -> tuple:
+def create_model_and_engine(args) -> tuple:
     """Create model with optional LoRA/QLoRA and DeepSpeed engine.
 
     Shared by SFT, DPO, and ORPO distributed training.
@@ -25,7 +25,6 @@ def create_model_and_engine(args, base_lr: float) -> tuple:
     Args:
         args: TrainingArguments with model_path, model_type, lora/q-lora fields,
               deepspeed_config, optimizer fields.
-        base_lr: Base learning rate (used to report and for lr auto-estimation).
 
     Returns:
         (model_engine, optimizer) tuple.

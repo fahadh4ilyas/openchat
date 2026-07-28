@@ -205,7 +205,7 @@ def train(args):
 
     setup_mlflow(args, train_total_steps, RANK)
 
-    model_engine, optimizer = create_model_and_engine(args, args.base_lr)
+    model_engine, optimizer = create_model_and_engine(args)
 
     # Load or compute reference log-probs (cache-loaded if precomputed, computed online if not)
     chosen_cache, rejected_cache = ensure_dpo_ref_logps_cached(

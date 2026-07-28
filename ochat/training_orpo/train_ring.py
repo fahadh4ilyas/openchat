@@ -159,7 +159,7 @@ def train(args):
 
     setup_mlflow(args, train_total_steps, RANK)
 
-    model_engine, optimizer = create_model_and_engine(args, args.base_lr)
+    model_engine, optimizer = create_model_and_engine(args)
     lr_scheduler = create_lr_scheduler(args, train_total_steps)
 
     progress_bar = None
