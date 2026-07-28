@@ -106,8 +106,11 @@ def create_model(args, base_lr: float):
         if model_path == args.model_path:
             lora_config = LoraConfig(
                 r=args.lora_r, lora_alpha=args.lora_alpha,
-                target_modules=args.lora_target_modules, lora_dropout=args.lora_dropout,
-                bias=args.lora_bias, modules_to_save=args.modules_to_save,
+                target_modules=args.lora_target_modules, exclude_modules=args.lora_exclude_modules,
+                lora_dropout=args.lora_dropout, fan_in_fan_out=args.lora_fan_in_fan_out,
+                use_rslora=args.lora_use_rslora, use_dora=args.lora_use_dora,
+                use_qalora=args.lora_use_qalora, qalora_group_size=args.lora_qalora_group_size,
+                bias=args.lora_bias, modules_to_save=args.lora_modules_to_save,
             )
             model = get_peft_model(model, lora_config)
         else:
