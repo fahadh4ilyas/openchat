@@ -95,13 +95,19 @@ def _run_eval(model_engine, eval_loader, args, eval_epoch, step=None):
             labels = labels.to(args.device)
             ref_logps = ref_logps.to(args.device)
 
-            per_seq_logps = model_engine(
+            outputs = model_engine(
                 **batch_tensor, **batch_info, total_seqs=total_seqs,
                 return_per_seq_logps=True,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
             eval_loss = kto_loss(per_seq_logps, ref_logps, labels, args.kto_beta)
+            # Add MoE aux_loss for consistent train/eval comparison
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    eval_loss = eval_loss + loss_struct[1]
             eval_total_loss.add_(eval_loss)
             eval_total_steps += 1
 
@@ -201,14 +207,21 @@ def train(args):
             labels = labels.to(args.device)
             ref_logps = ref_logps.to(args.device)
 
-            per_seq_logps = model_engine(
+            outputs = model_engine(
                 **batch_tensor, **batch_info, total_seqs=total_seqs,
                 return_per_seq_logps=True,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
 
             loss = kto_loss(per_seq_logps, ref_logps, labels, args.kto_beta)
+
+            # Add MoE router load-balancing aux_loss (SFT includes this; DPO/ORPO/KTO must too)
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    loss = loss + loss_struct[1]
 
             model_engine.backward(loss)
 

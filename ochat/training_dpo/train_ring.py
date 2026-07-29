@@ -116,12 +116,13 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
             rejected_ref = rejected_ref.to(args.device)
 
             combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-            per_seq_logps = model_engine(
+            outputs = model_engine(
                 **combined_t, **batch_info,
                 total_seqs=total_seqs, return_per_seq_logps=True,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
             chosen_logp = per_seq_logps[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:]
 
@@ -145,6 +146,11 @@ def _eval_loop(model_engine, eval_loader, args, eval_epoch):
                     discopop_tau=args.discopop_tau,
                     **kwargs,
                 )
+            # Add MoE aux_loss for consistent train/eval comparison
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    eval_loss = eval_loss + loss_struct[1]
             eval_total_loss.add_(eval_loss)
             eval_total_steps += 1
 
@@ -254,13 +260,14 @@ def train(args):
 
             # Combine chosen + rejected → single forward + split per-seq log-probs
             combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-            per_seq_logps = model_engine(
+            outputs = model_engine(
                 **combined_t, **batch_info,
                 total_seqs=total_seqs,
                 return_per_seq_logps=True,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
             chosen_logp = per_seq_logps[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:]
 
@@ -285,6 +292,12 @@ def train(args):
                     discopop_tau=args.discopop_tau,
                     **kwargs,
                 )
+
+            # Add MoE router load-balancing aux_loss (SFT includes this; DPO/ORPO/KTO must too)
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    loss = loss + loss_struct[1]
 
             model_engine.backward(loss)
 

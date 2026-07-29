@@ -129,7 +129,7 @@ def add_lora_args(parser: argparse.ArgumentParser):
     parser.add_argument("--lora-target-modules", "--lora_target_modules", type=str, nargs="*", default=["q_proj", "k_proj", "v_proj", "o_proj"])
     parser.add_argument("--lora-exclude-modules", "--lora_exclude_modules", type=str, nargs="*", default=None)
     parser.add_argument("--lora-bias", "--lora_bias", type=str, default="none")
-    parser.add_argument("--lora-fan-in-fan-out", "lora_fan_in_fan_out", action="store_true")
+    parser.add_argument("--lora-fan-in-fan-out", "--lora_fan_in_fan_out", action="store_true")
     parser.add_argument("--lora-use-rslora", "--lora_use_rslora", action="store_true")
     parser.add_argument("--lora-use-dora", "--lora_use_dora", action="store_true")
     parser.add_argument("--lora-use-qalora", "--lora_use_qalora", action="store_true")

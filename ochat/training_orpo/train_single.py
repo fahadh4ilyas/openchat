@@ -144,22 +144,29 @@ def _eval_loop(model, eval_loader, args, eval_epoch):
             rejected_t = {k: (v.to(args.device) if isinstance(v, torch.Tensor) else v) for k, v in rejected_t.items()}
 
             combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-            per_seq_logps = model(
+            outputs = model(
                 **combined_t, **batch_info,
                 num_seq=0,
                 return_per_seq_logps=True,
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
 
             resp_tokens = per_seq_response_tokens(combined_t)
             chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
             rejected_logp = per_seq_logps[num_chosen:] / resp_tokens[num_chosen:]
             sft_loss = -chosen_logp.mean()
             orpo = orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
+            eval_loss = sft_loss + orpo
+            # Add MoE aux_loss for consistent train/eval comparison
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    eval_loss = eval_loss + loss_struct[1]
             eval_total_sft.add_(sft_loss)
             eval_total_orpo.add_(orpo)
-            eval_total_loss.add_(sft_loss + orpo)
+            eval_total_loss.add_(eval_loss)
             eval_total_steps += 1
 
     return (eval_total_sft / eval_total_steps,
@@ -240,14 +247,14 @@ def train(args):
 
             # Combine chosen + rejected → single forward + split per-seq log-probs
             combined_t, num_chosen = combine_chosen_rejected_batch(chosen_t, rejected_t)
-            per_seq_logps = model(
+            outputs = model(
                 **combined_t, **batch_info,
                 num_seq=0,
                 return_per_seq_logps=True,
-                
                 use_fast_norm=args.use_fast_norm,
                 use_fast_rope=args.use_fast_rope,
-            ).logits
+            )
+            per_seq_logps = outputs.logits
 
             resp_tokens = per_seq_response_tokens(combined_t)
             chosen_logp = per_seq_logps[:num_chosen] / resp_tokens[:num_chosen]
@@ -255,6 +262,12 @@ def train(args):
 
             # ORPO loss = SFT NLL on chosen + odds-ratio penalty
             loss = -chosen_logp.mean() + orpo_loss(chosen_logp, rejected_logp, args.orpo_beta)
+
+            # Add MoE router load-balancing aux_loss (SFT includes this; DPO/ORPO/KTO must too)
+            if outputs.loss is not None:
+                loss_struct, _ = outputs.loss
+                if isinstance(loss_struct, tuple):
+                    loss = loss + loss_struct[1]
 
             loss.backward()
 
